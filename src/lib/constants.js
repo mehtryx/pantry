@@ -1,38 +1,53 @@
-export const LOCATIONS = [
-  { id: 'kitchen_fridge', label: 'Kitchen Fridge' },
-  { id: 'kitchen_freezer', label: 'Kitchen Freezer' },
-  { id: 'basement_fridge', label: 'Basement Fridge' },
-  { id: 'basement_freezer', label: 'Basement Freezer' },
+// Special protected location — always exists, cannot be renamed or deleted.
+// Used by the grocery→put-away flow.
+export const WAITING = 'waiting_to_be_stored'
+export const WAITING_LABEL = 'Waiting to be Stored'
+
+// Default storage locations — seeded into the household on first run.
+// After that, storage locations are user-editable and live in
+// households/{domain}.locations.
+export const DEFAULT_STORAGE_LOCATIONS = [
+  { id: 'kitchen_fridge',         label: 'Kitchen Fridge' },
+  { id: 'kitchen_freezer',        label: 'Kitchen Freezer' },
+  { id: 'basement_fridge',        label: 'Basement Fridge' },
+  { id: 'basement_freezer',       label: 'Basement Freezer' },
   { id: 'basement_chest_freezer', label: 'Basement Chest Freezer' },
-  { id: 'kitchen_pantry', label: 'Kitchen Pantry' },
-  { id: 'dining_room_pantry', label: 'Dining Room Pantry' },
-  { id: 'waiting_to_be_stored', label: 'Waiting to be Stored' },
+  { id: 'kitchen_pantry',         label: 'Kitchen Pantry' },
+  { id: 'dining_room_pantry',     label: 'Dining Room Pantry' },
 ]
 
-export const STORAGE_LOCATIONS = LOCATIONS.filter(l => l.id !== 'waiting_to_be_stored')
-export const WAITING = 'waiting_to_be_stored'
+/**
+ * Given the household's storage locations array (or falling back to defaults),
+ * return a lookup object { id → label } that also includes WAITING.
+ */
+export function buildLocationLookup(storageLocations) {
+  const map = { [WAITING]: WAITING_LABEL }
+  for (const l of (storageLocations || DEFAULT_STORAGE_LOCATIONS)) {
+    map[l.id] = l.label
+  }
+  return map
+}
 
-export function locationLabel(id) {
-  return LOCATIONS.find(l => l.id === id)?.label ?? id
+/**
+ * Full list including WAITING, in display order (storage locations first).
+ * Used by filter dropdowns that need every possible location.
+ */
+export function fullLocationList(storageLocations) {
+  const arr = (storageLocations || DEFAULT_STORAGE_LOCATIONS).map(l => ({ ...l }))
+  arr.push({ id: WAITING, label: WAITING_LABEL })
+  return arr
+}
+
+/** Generate a stable-ish ID from a user-entered label. */
+export function locationIdFromLabel(label) {
+  const base = label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+  return base || `loc_${Date.now()}`
 }
 
 export const UNITS = ['g', 'kg', 'mL', 'L', 'cup', 'tbsp', 'tsp', 'count', 'package']
 
-// Drain order for auto-cooking: kitchen first (easier to grab), then basement
-export const DRAIN_ORDER = [
-  'kitchen_fridge',
-  'kitchen_pantry',
-  'dining_room_pantry',
-  'kitchen_freezer',
-  'basement_fridge',
-  'basement_freezer',
-  'basement_chest_freezer',
-]
-
 export const MEAL_SLOTS = ['breakfast', 'lunch', 'dinner']
 
-// Units that need a space between the number and the unit (word-like units).
-// Everything else is a short symbolic/metric unit and stays attached.
 const SPACED_UNITS = new Set(['cup', 'count', 'package'])
 
 export function formatQty(quantity, unit) {

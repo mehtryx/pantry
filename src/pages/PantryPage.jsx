@@ -1,12 +1,12 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { Search, Plus, Package2, Trash2, Minus } from 'lucide-react'
 import { useData } from '../contexts/DataContext'
-import { LOCATIONS, STORAGE_LOCATIONS, UNITS, WAITING, locationLabel, formatQty } from '../lib/constants'
+import { UNITS, WAITING, formatQty } from '../lib/constants'
 import { computeItemStatus, STATUS_COLORS, STATUS_LABELS } from '../lib/status'
 import { Button, Input, Select, Card, Modal, EmptyState } from '../components/UI'
 
 export default function PantryPage() {
-  const { items, grocery, reservations, addItem, updateItem, setItemLocationQty, deleteItem } = useData()
+  const { items, grocery, reservations, addItem, updateItem, setItemLocationQty, deleteItem, storageLocations, allLocations, locationLookup } = useData()
   const [search, setSearch] = useState('')
   const [sortBy, setSortBy] = useState('name')
   const [filterLoc, setFilterLoc] = useState('all')
@@ -68,7 +68,7 @@ export default function PantryPage() {
         </Select>
         <Select value={filterLoc} onChange={e => setFilterLoc(e.target.value)} className="text-sm">
           <option value="all">All locations</option>
-          {LOCATIONS.map(l => (
+          {allLocations.map(l => (
             <option key={l.id} value={l.id}>{l.label}</option>
           ))}
         </Select>
@@ -92,7 +92,7 @@ export default function PantryPage() {
                   <div className="flex-1 min-w-0">
                     <div className="font-medium text-body truncate">{item.name}</div>
                     <div className="text-xs text-muted truncate">
-                      {stockSummary(item)}
+                      {stockSummary(item, locationLookup)}
                     </div>
                   </div>
                   <div className="text-right text-xs text-muted">
@@ -106,23 +106,24 @@ export default function PantryPage() {
         </ul>
       )}
 
-      <AddItemModal open={showAdd} onClose={() => setShowAdd(false)} onAdd={addItem} />
+      <AddItemModal open={showAdd} onClose={() => setShowAdd(false)} onAdd={addItem} storageLocations={storageLocations} />
       <ItemDetailModal
         item={detailItem}
         onClose={() => setDetailItem(null)}
         setItemLocationQty={setItemLocationQty}
         updateItem={updateItem}
         deleteItem={(id) => { deleteItem(id); setDetailItem(null) }}
+        storageLocations={storageLocations}
       />
     </div>
   )
 }
 
-function stockSummary(item) {
+function stockSummary(item, locationLookup) {
   const entries = Object.entries(item.stock || {}).filter(([, q]) => q > 0)
   if (entries.length === 0) return `Out of stock · ${item.unit}`
   return entries
-    .map(([loc, q]) => `${formatQty(q, item.unit)} in ${locationLabel(loc)}`)
+    .map(([loc, q]) => `${formatQty(q, item.unit)} in ${locationLookup[loc] || loc}`)
     .join(' · ')
 }
 
@@ -132,15 +133,22 @@ function primaryLocation(item) {
   return entries[0]?.[0]
 }
 
-function AddItemModal({ open, onClose, onAdd }) {
+function AddItemModal({ open, onClose, onAdd, storageLocations }) {
   const [name, setName] = useState('')
   const [unit, setUnit] = useState('count')
-  const [location, setLocation] = useState('kitchen_pantry')
+  const [location, setLocation] = useState('')
   const [qty, setQty] = useState('1')
 
-  function reset() { setName(''); setUnit('count'); setLocation('kitchen_pantry'); setQty('1') }
+  // Default location to first available when list changes / modal opens
+  useEffect(() => {
+    if (!location && storageLocations.length > 0) {
+      setLocation(storageLocations[0].id)
+    }
+  }, [storageLocations, location])
+
+  function reset() { setName(''); setUnit('count'); setLocation(storageLocations[0]?.id || ''); setQty('1') }
   async function submit() {
-    if (!name.trim()) return
+    if (!name.trim() || !location) return
     await onAdd({ name, unit, location, quantity: Number(qty) })
     reset(); onClose()
   }
@@ -167,7 +175,7 @@ function AddItemModal({ open, onClose, onAdd }) {
         <div>
           <label className="text-sm text-muted mb-1 block">Location</label>
           <Select value={location} onChange={e => setLocation(e.target.value)}>
-            {STORAGE_LOCATIONS.map(l => <option key={l.id} value={l.id}>{l.label}</option>)}
+            {storageLocations.map(l => <option key={l.id} value={l.id}>{l.label}</option>)}
           </Select>
         </div>
         <div className="flex gap-2 pt-2">
@@ -179,12 +187,12 @@ function AddItemModal({ open, onClose, onAdd }) {
   )
 }
 
-function ItemDetailModal({ item, onClose, setItemLocationQty, updateItem, deleteItem }) {
+function ItemDetailModal({ item, onClose, setItemLocationQty, updateItem, deleteItem, storageLocations }) {
   const [editingName, setEditingName] = useState(false)
   const [nameDraft, setNameDraft] = useState('')
 
   if (!item) return null
-  const stockEntries = STORAGE_LOCATIONS.map(loc => ({
+  const stockEntries = storageLocations.map(loc => ({
     location: loc.id,
     label: loc.label,
     qty: item.stock?.[loc.id] || 0,

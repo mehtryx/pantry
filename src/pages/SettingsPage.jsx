@@ -1,13 +1,17 @@
-import { Sun, Moon, Monitor, Download, LogOut, CheckCircle2 } from 'lucide-react'
+import { useState } from 'react'
+import { Sun, Moon, Monitor, Download, LogOut, CheckCircle2, MapPin } from 'lucide-react'
 import { useTheme } from '../contexts/ThemeContext'
 import { useData } from '../contexts/DataContext'
 import { signOutUser } from '../lib/firebase'
 import { Button, Card } from '../components/UI'
+import LocationsEditor from '../components/LocationsEditor'
 import { PALETTES, PALETTE_ORDER } from '../lib/palettes'
+import pkg from '../../package.json'
 
 export default function SettingsPage() {
   const { mode, setMode, palette, setPalette } = useTheme()
-  const { items, grocery, recipes, mealPlans, user } = useData()
+  const { items, grocery, recipes, mealPlans, user, storageLocations } = useData()
+  const [showLocations, setShowLocations] = useState(false)
 
   function exportData() {
     const data = { items, grocery, recipes, mealPlans, exportedAt: new Date().toISOString() }
@@ -64,6 +68,16 @@ export default function SettingsPage() {
       </Card>
 
       <Card className="p-4 mb-4">
+        <h3 className="text-sm font-medium text-muted mb-2">Locations</h3>
+        <div className="text-xs text-muted mb-3">
+          {storageLocations.length} storage {storageLocations.length === 1 ? 'location' : 'locations'} configured
+        </div>
+        <Button variant="secondary" onClick={() => setShowLocations(true)} className="w-full">
+          <MapPin className="w-4 h-4" /> Edit Locations
+        </Button>
+      </Card>
+
+      <Card className="p-4 mb-4">
         <h3 className="text-sm font-medium text-muted mb-2">Data</h3>
         <div className="text-xs text-muted mb-3">
           {items.length} items · {grocery.length} grocery entries · {recipes.length} recipes · {mealPlans.length} meal plans
@@ -74,11 +88,12 @@ export default function SettingsPage() {
       </Card>
 
       <Card className="p-4">
-        <h3 className="text-sm font-medium text-muted mb-2">About</h3>
-        <p className="text-xs text-muted">
-          Pantry v0.7 — Themes!
+        <p className="text-xs text-muted text-center">
+          Pantry v{pkg.version}
         </p>
       </Card>
+
+      <LocationsEditor open={showLocations} onClose={() => setShowLocations(false)} />
     </div>
   )
 }

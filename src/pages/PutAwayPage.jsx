@@ -1,11 +1,11 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { Package, ArrowRight } from 'lucide-react'
 import { useData } from '../contexts/DataContext'
-import { STORAGE_LOCATIONS, WAITING, formatQty } from '../lib/constants'
+import { WAITING, formatQty } from '../lib/constants'
 import { Button, Select, Card, Modal, EmptyState } from '../components/UI'
 
 export default function PutAwayPage() {
-  const { items, putAway } = useData()
+  const { items, putAway, storageLocations } = useData()
   const [target, setTarget] = useState(null) // { item }
 
   const waitingItems = useMemo(() =>
@@ -48,14 +48,20 @@ export default function PutAwayPage() {
         </ul>
       )}
 
-      <PutAwayModal target={target} onClose={() => setTarget(null)} putAway={putAway} />
+      <PutAwayModal target={target} onClose={() => setTarget(null)} putAway={putAway} storageLocations={storageLocations} />
     </div>
   )
 }
 
-function PutAwayModal({ target, onClose, putAway }) {
-  const [location, setLocation] = useState('kitchen_pantry')
+function PutAwayModal({ target, onClose, putAway, storageLocations }) {
+  const [location, setLocation] = useState('')
   const [qty, setQty] = useState('')
+
+  useEffect(() => {
+    if (target && !location && storageLocations.length > 0) {
+      setLocation(storageLocations[0].id)
+    }
+  }, [target, storageLocations, location])
 
   if (!target) return null
   const { item } = target
@@ -64,7 +70,7 @@ function PutAwayModal({ target, onClose, putAway }) {
 
   async function submit(all = false) {
     const moving = all ? available : amountToMove
-    if (moving <= 0) return
+    if (moving <= 0 || !location) return
     await putAway(item.id, location, moving)
     setQty('')
     onClose()
@@ -80,7 +86,7 @@ function PutAwayModal({ target, onClose, putAway }) {
         <div>
           <label className="text-sm text-muted mb-1 block">Destination</label>
           <Select value={location} onChange={e => setLocation(e.target.value)}>
-            {STORAGE_LOCATIONS.map(l => <option key={l.id} value={l.id}>{l.label}</option>)}
+            {storageLocations.map(l => <option key={l.id} value={l.id}>{l.label}</option>)}
           </Select>
         </div>
 

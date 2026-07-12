@@ -5,7 +5,7 @@ import {
 } from 'firebase/firestore'
 import { db, auth, initAuth, ensureHouseholdMembership, householdIdForEmail } from '../lib/firebase'
 import { onAuthStateChanged } from 'firebase/auth'
-import { WAITING, DRAIN_ORDER } from '../lib/constants'
+import { WAITING, DEFAULT_STORAGE_LOCATIONS, buildLocationLookup, fullLocationList } from '../lib/constants'
 
 const DataContext = createContext(null)
 export const useData = () => useContext(DataContext)
@@ -14,6 +14,7 @@ export function DataProvider({ children }) {
   const [user, setUser] = useState(null)
   const [authError, setAuthError] = useState(null)
   const [householdId, setHouseholdId] = useState(null)
+  const [storageLocations, setStorageLocations] = useState(DEFAULT_STORAGE_LOCATIONS)
   const [ready, setReady] = useState(false)
   const [items, setItems] = useState([])
   const [grocery, setGrocery] = useState([])
@@ -59,13 +60,31 @@ export function DataProvider({ children }) {
   useEffect(() => {
     if (!user || !householdId) {
       setItems([]); setGrocery([]); setRecipes([]); setMealPlans([])
-      setReady(!!user)  // ready enough to render the gate
+      setStorageLocations(DEFAULT_STORAGE_LOCATIONS)
+      setReady(!!user)
       return
     }
 
     const scoped = [where('householdId', '==', householdId)]
 
+    // Household doc — for shared settings like storage locations
+    const unsubHousehold = onSnapshot(doc(db, 'households', householdId), snap => {
+      if (!snap.exists()) return
+      const data = snap.data()
+      if (Array.isArray(data.locations) && data.locations.length > 0) {
+        setStorageLocations(data.locations)
+      } else {
+        // First run under v0.8: seed defaults into the household doc.
+        // Any concurrent writer will just overwrite with the same values.
+        updateDoc(doc(db, 'households', householdId), {
+          locations: DEFAULT_STORAGE_LOCATIONS,
+        }).catch(err => console.warn('Failed to seed default locations:', err))
+        setStorageLocations(DEFAULT_STORAGE_LOCATIONS)
+      }
+    })
+
     const unsubs = [
+      unsubHousehold,
       onSnapshot(query(collection(db, 'items'), ...scoped),
         snap => setItems(snap.docs.map(d => ({ id: d.id, ...d.data() })))),
       onSnapshot(query(collection(db, 'grocery'), ...scoped),
@@ -85,7 +104,7 @@ export function DataProvider({ children }) {
   // Auto-cook meals whose date has passed
   useEffect(() => {
     if (!ready || !user) return
-    autoCookPastMeals(householdId, user.uid, mealPlans, items, recipes)
+    autoCookPastMeals(householdId, user.uid, mealPlans, items, recipes, storageLocations)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, mealPlans.length, items.length, recipes.length])
 
@@ -244,14 +263,69 @@ export function DataProvider({ children }) {
     await reconcileGroceryList(scopeFields(), remaining, items, recipes, grocery)
   }
 
+  // ---------- Location Management ----------
+
+  async function renameLocation(id, newLabel) {
+    const trimmed = newLabel.trim()
+    if (!trimmed) return
+    const next = storageLocations.map(l => l.id === id ? { ...l, label: trimmed } : l)
+    await updateDoc(doc(db, 'households', householdId), { locations: next })
+  }
+
+  async function addLocation(label, id) {
+    const trimmed = label.trim()
+    if (!trimmed) return
+    // Ensure unique ID
+    let candidate = id
+    const existing = new Set(storageLocations.map(l => l.id))
+    if (existing.has(candidate)) {
+      let n = 2
+      while (existing.has(`${candidate}_${n}`)) n++
+      candidate = `${candidate}_${n}`
+    }
+    const next = [...storageLocations, { id: candidate, label: trimmed }]
+    await updateDoc(doc(db, 'households', householdId), { locations: next })
+  }
+
+  async function reorderLocations(orderedIds) {
+    const byId = Object.fromEntries(storageLocations.map(l => [l.id, l]))
+    const next = orderedIds.map(id => byId[id]).filter(Boolean)
+    await updateDoc(doc(db, 'households', householdId), { locations: next })
+  }
+
+  /**
+   * Delete a location. Any stock currently at that location gets moved to
+   * "Waiting to be Stored" so it's not orphaned.
+   */
+  async function deleteLocation(id) {
+    const next = storageLocations.filter(l => l.id !== id)
+    const batch = writeBatch(db)
+    batch.update(doc(db, 'households', householdId), { locations: next })
+
+    // Sweep every item: if it has stock at the deleted location, move to WAITING
+    for (const item of items) {
+      const qty = item.stock?.[id] || 0
+      if (qty <= 0) continue
+      const newStock = { ...item.stock }
+      delete newStock[id]
+      newStock[WAITING] = (newStock[WAITING] || 0) + qty
+      batch.update(doc(db, 'items', item.id), { stock: newStock, updatedAt: serverTimestamp() })
+    }
+    await batch.commit()
+  }
+
   const value = {
     user, ready, authError, clearAuthError: () => setAuthError(null),
     householdId,
+    storageLocations,
+    locationLookup: buildLocationLookup(storageLocations),
+    allLocations: fullLocationList(storageLocations),
     items, grocery, recipes, mealPlans, reservations,
     addItem, updateItem, setItemLocationQty, deleteItem,
     addGrocery, updateGrocery, deleteGrocery, setGroceryBought, putAway,
     addRecipe, updateRecipe, deleteRecipe,
     addMealPlan, deleteMealPlan,
+    renameLocation, addLocation, reorderLocations, deleteLocation,
   }
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>
@@ -267,10 +341,12 @@ export function todayISO() {
  * DRAIN_ORDER. Runs opportunistically whenever the app loads with pending
  * past meals.
  */
-async function autoCookPastMeals(householdId, uid, mealPlans, items, recipes) {
+async function autoCookPastMeals(householdId, uid, mealPlans, items, recipes, storageLocations) {
   const today = todayISO()
   const toCook = mealPlans.filter(p => !p.cooked && p.date < today)
   if (toCook.length === 0) return
+
+  const drainOrder = (storageLocations || []).map(l => l.id)
 
   const batch = writeBatch(db)
   const stockDeltas = {}
@@ -287,7 +363,7 @@ async function autoCookPastMeals(householdId, uid, mealPlans, items, recipes) {
       if (!item) continue
       let need = ing.quantity || 0
       const workingStock = { ...(item.stock || {}), ...(stockDeltas[ing.itemId] || {}) }
-      for (const loc of DRAIN_ORDER) {
+      for (const loc of drainOrder) {
         if (need <= 0) break
         const have = workingStock[loc] || 0
         if (have <= 0) continue
