@@ -104,3 +104,28 @@ export async function signOutUser() {
   await signOut(auth)
   window.location.reload()
 }
+
+/**
+ * Complete sign-in from a pasted URL (works around iOS PWA link-routing).
+ * Pass the full sign-in URL from clipboard; we validate it, link or sign in,
+ * and return the resulting user.
+ */
+export async function completeSignInFromUrl(url, email) {
+  if (!isSignInWithEmailLink(auth, url)) {
+    throw new Error('That does not look like a valid sign-in link. Make sure you copied the whole link from the email.')
+  }
+  const currentUser = auth.currentUser
+  try {
+    if (currentUser && currentUser.isAnonymous) {
+      const credential = EmailAuthProvider.credentialWithLink(email, url)
+      return await linkWithCredential(currentUser, credential)
+    } else {
+      return await signInWithEmailLink(auth, email, url)
+    }
+  } catch (err) {
+    if (err.code === 'auth/credential-already-in-use' || err.code === 'auth/email-already-in-use') {
+      return await signInWithEmailLink(auth, email, url)
+    }
+    throw err
+  }
+}

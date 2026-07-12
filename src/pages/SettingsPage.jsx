@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { Sun, Moon, Monitor, Download, Mail, LogOut, CheckCircle2 } from 'lucide-react'
+import { Sun, Moon, Monitor, Download, Mail, LogOut, CheckCircle2, ClipboardPaste } from 'lucide-react'
 import { useTheme } from '../contexts/ThemeContext'
 import { useData } from '../contexts/DataContext'
-import { sendMagicLink, signOutUser } from '../lib/firebase'
+import { sendMagicLink, signOutUser, completeSignInFromUrl } from '../lib/firebase'
 import { Button, Card, Input } from '../components/UI'
 
 export default function SettingsPage() {
@@ -65,15 +65,7 @@ export default function SettingsPage() {
             </Button>
           </>
         ) : linkSent ? (
-          <div className="bg-sage-400/10 border border-sage-400/30 rounded-xl p-3 text-sm">
-            <strong>Check your email.</strong> Tap the sign-in link we sent to <strong>{email}</strong>. Open it on this same device to keep your existing pantry data.
-            <button
-              onClick={() => { setLinkSent(false); setEmail('') }}
-              className="block mt-2 text-xs text-sage-500 underline"
-            >
-              Use a different email
-            </button>
-          </div>
+          <SignInLinkFlow email={email} onCancel={() => { setLinkSent(false); setEmail('') }} />
         ) : (
           <>
             <p className="text-xs text-sage-500 dark:text-cream-400 mb-3">
@@ -122,9 +114,91 @@ export default function SettingsPage() {
       <Card className="p-4">
         <h3 className="text-sm font-medium text-sage-600 dark:text-cream-300 mb-2">About</h3>
         <p className="text-xs text-sage-500 dark:text-cream-400">
-          Pantry v0.2 — Phase 1 with email sign-in. Meal planner coming next.
+          Pantry v0.3 — Sign-in with paste-link fallback for iOS PWAs.
         </p>
       </Card>
+    </div>
+  )
+}
+
+function SignInLinkFlow({ email, onCancel }) {
+  const [pastedUrl, setPastedUrl] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [showManual, setShowManual] = useState(false)
+
+  async function pasteFromClipboard() {
+    setError('')
+    try {
+      const text = await navigator.clipboard.readText()
+      if (!text) {
+        setError('Clipboard is empty. Copy the sign-in link from your email first.')
+        return
+      }
+      await complete(text)
+    } catch (err) {
+      // Clipboard API might be blocked or unsupported — fall through to manual
+      setShowManual(true)
+      setError('Could not read clipboard automatically. Paste the link below instead.')
+    }
+  }
+
+  async function complete(url) {
+    setBusy(true); setError('')
+    try {
+      await completeSignInFromUrl(url.trim(), email)
+      // The auth listener in DataContext will pick up the new user and re-render.
+    } catch (err) {
+      console.error(err)
+      setError(err.message || 'Sign-in failed. Double-check the link is correct.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="bg-sage-400/10 border border-sage-400/30 rounded-xl p-3 text-sm">
+        <div className="font-medium mb-1">Check your email</div>
+        <p className="text-xs text-sage-600 dark:text-cream-300">
+          We sent a sign-in link to <strong>{email}</strong>.
+        </p>
+        <ol className="text-xs text-sage-600 dark:text-cream-300 mt-2 space-y-1 list-decimal list-inside">
+          <li>Open the email in Mail</li>
+          <li><strong>Long-press</strong> the sign-in link and choose <strong>Copy Link</strong></li>
+          <li>Come back here and tap <strong>Paste Sign-In Link</strong> below</li>
+        </ol>
+      </div>
+
+      <Button onClick={pasteFromClipboard} disabled={busy} className="w-full">
+        <ClipboardPaste className="w-4 h-4" /> {busy ? 'Signing in…' : 'Paste Sign-In Link'}
+      </Button>
+
+      {showManual && (
+        <div className="space-y-2">
+          <label className="text-xs text-sage-500">Or paste the link here manually:</label>
+          <Input
+            value={pastedUrl}
+            onChange={e => setPastedUrl(e.target.value)}
+            placeholder="https://..."
+          />
+          <Button variant="secondary" onClick={() => complete(pastedUrl)} disabled={busy || !pastedUrl.trim()} className="w-full">
+            Sign In
+          </Button>
+        </div>
+      )}
+
+      {!showManual && (
+        <button onClick={() => setShowManual(true)} className="text-xs text-sage-500 underline block w-full text-center">
+          Paste doesn't work? Enter link manually
+        </button>
+      )}
+
+      {error && <div className="text-xs text-terracotta-500">{error}</div>}
+
+      <button onClick={onCancel} className="text-xs text-sage-500 underline block w-full text-center">
+        Use a different email
+      </button>
     </div>
   )
 }
