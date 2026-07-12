@@ -1,11 +1,13 @@
 import { useState, useMemo, useEffect } from 'react'
-import { Search, Plus, Package2, Trash2, Minus } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { Search, Plus, Package2, Trash2, Minus, Package, ChevronRight } from 'lucide-react'
 import { useData } from '../contexts/DataContext'
 import { UNITS, WAITING, formatQty } from '../lib/constants'
 import { computeItemStatus, STATUS_COLORS, STATUS_LABELS } from '../lib/status'
 import { Button, Input, Select, Card, Modal, EmptyState } from '../components/UI'
 
 export default function PantryPage() {
+  const navigate = useNavigate()
   const { items, grocery, reservations, addItem, updateItem, setItemLocationQty, deleteItem, storageLocations, allLocations, locationLookup } = useData()
   const [search, setSearch] = useState('')
   const [sortBy, setSortBy] = useState('name')
@@ -13,15 +15,47 @@ export default function PantryPage() {
   const [showAdd, setShowAdd] = useState(false)
   const [detailItem, setDetailItem] = useState(null)
 
+  // Item is "empty / no demand" when it has zero stock everywhere,
+  // isn't on the grocery list, and no meal plan reserves it.
+  function isEmptyNoDemand(item) {
+    const totalStock = Object.values(item.stock || {}).reduce((s, q) => s + (q || 0), 0)
+    if (totalStock > 0) return false
+    if ((reservations[item.id] || 0) > 0) return false
+    if (grocery.some(g => !g.bought && g.itemId === item.id)) return false
+    return true
+  }
+
+  // Total waiting-to-be-stored across all items — drives the Put Away chip
+  const waitingCount = useMemo(
+    () => items.filter(i => (i.stock?.[WAITING] || 0) > 0).length,
+    [items]
+  )
+
   const filtered = useMemo(() => {
     const s = search.trim().toLowerCase()
     let list = items.filter(it => {
-      if (s && !it.name.toLowerCase().includes(s)) return false
+      const empty = isEmptyNoDemand(it)
+
+      // "Empty / no demand" filter: show only these items
+      if (filterLoc === 'empty') {
+        if (!empty) return false
+        if (s && !it.name.toLowerCase().includes(s)) return false
+        return true
+      }
+
+      // Specific location filter: item must have stock there
       if (filterLoc !== 'all') {
         if (!(it.stock?.[filterLoc] > 0)) return false
+        if (s && !it.name.toLowerCase().includes(s)) return false
+        return true
       }
+
+      // 'all' mode: hide empty items unless the user is searching for one
+      if (empty && !s) return false
+      if (s && !it.name.toLowerCase().includes(s)) return false
       return true
     })
+
     if (sortBy === 'name') {
       list.sort((a, b) => a.name.localeCompare(b.name))
     } else if (sortBy === 'location') {
@@ -50,6 +84,19 @@ export default function PantryPage() {
         </Button>
       </header>
 
+      {waitingCount > 0 && (
+        <button
+          onClick={() => navigate('/putaway')}
+          className="w-full mb-3 flex items-center gap-2 bg-warn/10 border border-warn/30 rounded-xl px-3 py-2.5 text-left active:bg-warn/20"
+        >
+          <Package className="w-4 h-4 text-warn flex-shrink-0" />
+          <span className="text-sm text-body flex-1">
+            {waitingCount} {waitingCount === 1 ? 'item' : 'items'} waiting to be stored
+          </span>
+          <ChevronRight className="w-4 h-4 text-subtle" />
+        </button>
+      )}
+
       <div className="relative mb-3">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-subtle" />
         <Input
@@ -71,6 +118,7 @@ export default function PantryPage() {
           {allLocations.map(l => (
             <option key={l.id} value={l.id}>{l.label}</option>
           ))}
+          <option value="empty">Empty / no demand</option>
         </Select>
       </div>
 

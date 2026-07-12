@@ -1,10 +1,10 @@
 import { NavLink } from 'react-router-dom'
-import { Home, ShoppingCart, Package, CalendarDays, Settings } from 'lucide-react'
+import { Home, ShoppingCart, BookOpen, CalendarDays, Settings } from 'lucide-react'
 
 const tabs = [
   { to: '/', label: 'Pantry', icon: Home },
   { to: '/grocery', label: 'Grocery', icon: ShoppingCart },
-  { to: '/putaway', label: 'Put Away', icon: Package },
+  { to: '/recipes', label: 'Recipes', icon: BookOpen },
   { to: '/meals', label: 'Meals', icon: CalendarDays },
   { to: '/settings', label: 'More', icon: Settings },
 ]

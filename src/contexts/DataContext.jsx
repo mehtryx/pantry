@@ -101,12 +101,27 @@ export function DataProvider({ children }) {
     return () => unsubs.forEach(u => u())
   }, [user, householdId])
 
-  // Auto-cook meals whose date has passed
+  // Auto-cook meals whose date has passed. Runs on mount, when the page
+  // becomes visible again (PWA resumed from background), and on a periodic
+  // interval so the app rolls over correctly if left open past midnight.
+  const [tick, setTick] = useState(0)
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') setTick(t => t + 1)
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    const iv = setInterval(() => setTick(t => t + 1), 5 * 60 * 1000) // every 5 min
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      clearInterval(iv)
+    }
+  }, [])
+
   useEffect(() => {
     if (!ready || !user) return
     autoCookPastMeals(householdId, user.uid, mealPlans, items, recipes, storageLocations)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, mealPlans.length, items.length, recipes.length])
+  }, [ready, mealPlans.length, items.length, recipes.length, tick])
 
   const reservations = useMemo(() => {
     const map = {}
@@ -128,7 +143,10 @@ export function DataProvider({ children }) {
   const scopeFields = () => ({ householdId })
 
   async function addItem({ name, unit, location, quantity }) {
-    const stock = { [location]: Number(quantity) || 0 }
+    const stock = {}
+    if (location && (Number(quantity) || 0) > 0) {
+      stock[location] = Number(quantity)
+    }
     const ref = await addDoc(collection(db, 'items'), {
       ...scopeFields(),
       name: name.trim(), unit, stock, stores: [],
@@ -238,22 +256,87 @@ export function DataProvider({ children }) {
 
   async function addRecipe({ name, ingredients }) {
     const ref = await addDoc(collection(db, 'recipes'), {
-      ...scopeFields(), name: name.trim(), ingredients, createdAt: serverTimestamp()
+      ...scopeFields(),
+      name: name.trim(),
+      ingredients: ingredients || [],
+      // Phase 3 UI fields — stored but not yet edited
+      servings: null,
+      notes: null,
+      prepMinutes: null,
+      cookMinutes: null,
+      tags: [],
+      photoUrl: null,
+      isLeftover: false,
+      createdAt: serverTimestamp(),
     })
     return ref.id
   }
+
   async function updateRecipe(id, patch) {
     await updateDoc(doc(db, 'recipes', id), patch)
-  }
-  async function deleteRecipe(id) {
-    await deleteDoc(doc(db, 'recipes', id))
+    // If ingredients changed, delete past uncooked plans referencing this recipe
+    // (they'd have stale expected reservations)
+    if (patch.ingredients) {
+      const today = todayISO()
+      const stale = mealPlans.filter(p => p.recipeId === id && !p.cooked && p.date < today)
+      if (stale.length > 0) {
+        const batch = writeBatch(db)
+        for (const p of stale) batch.delete(doc(db, 'mealPlans', p.id))
+        await batch.commit()
+      }
+    }
   }
 
-  async function addMealPlan({ date, slot, recipeId }) {
-    const ref = await addDoc(collection(db, 'mealPlans'), {
-      ...scopeFields(), date, slot, recipeId, cooked: false, createdAt: serverTimestamp()
+  async function duplicateRecipe(id) {
+    const src = recipes.find(r => r.id === id)
+    if (!src) return null
+    const ref = await addDoc(collection(db, 'recipes'), {
+      ...scopeFields(),
+      name: `${src.name} (copy)`,
+      ingredients: src.ingredients || [],
+      servings: src.servings ?? null,
+      notes: src.notes ?? null,
+      prepMinutes: src.prepMinutes ?? null,
+      cookMinutes: src.cookMinutes ?? null,
+      tags: src.tags || [],
+      photoUrl: src.photoUrl ?? null,
+      isLeftover: false,
+      createdAt: serverTimestamp(),
     })
-    await reconcileGroceryList(scopeFields(), [...mealPlans, { id: ref.id, date, slot, recipeId, cooked: false }], items, recipes, grocery)
+    return ref.id
+  }
+
+  /**
+   * Delete a recipe, but block if any uncooked (current or future) meal plans
+   * still reference it. Returns { ok: true } on success, or { ok: false, blockers: [...] }
+   * with a list of plan descriptions.
+   */
+  async function deleteRecipe(id) {
+    const today = todayISO()
+    const blockers = mealPlans
+      .filter(p => p.recipeId === id && !p.cooked && p.date >= today)
+      .map(p => ({ id: p.id, date: p.date, slot: p.slot }))
+    if (blockers.length > 0) {
+      return { ok: false, blockers }
+    }
+    await deleteDoc(doc(db, 'recipes', id))
+    return { ok: true }
+  }
+
+  async function addMealPlan({ date, slot, recipeId, leftoverText }) {
+    const payload = {
+      ...scopeFields(),
+      date,
+      slot,
+      recipeId: recipeId || null,
+      leftoverText: leftoverText || null,
+      cooked: false,
+      createdAt: serverTimestamp(),
+    }
+    const ref = await addDoc(collection(db, 'mealPlans'), payload)
+    if (recipeId) {
+      await reconcileGroceryList(scopeFields(), [...mealPlans, { id: ref.id, ...payload }], items, recipes, grocery)
+    }
     return ref.id
   }
 
@@ -323,7 +406,7 @@ export function DataProvider({ children }) {
     items, grocery, recipes, mealPlans, reservations,
     addItem, updateItem, setItemLocationQty, deleteItem,
     addGrocery, updateGrocery, deleteGrocery, setGroceryBought, putAway,
-    addRecipe, updateRecipe, deleteRecipe,
+    addRecipe, updateRecipe, deleteRecipe, duplicateRecipe,
     addMealPlan, deleteMealPlan,
     renameLocation, addLocation, reorderLocations, deleteLocation,
   }
@@ -352,8 +435,9 @@ async function autoCookPastMeals(householdId, uid, mealPlans, items, recipes, st
   const stockDeltas = {}
 
   for (const plan of toCook) {
-    const recipe = recipes.find(r => r.id === plan.recipeId)
+    const recipe = plan.recipeId ? recipes.find(r => r.id === plan.recipeId) : null
     if (!recipe) {
+      // Leftover or orphaned recipe reference — just mark cooked
       batch.update(doc(db, 'mealPlans', plan.id), { cooked: true })
       continue
     }
@@ -376,7 +460,15 @@ async function autoCookPastMeals(householdId, uid, mealPlans, items, recipes, st
       }
       stockDeltas[ing.itemId] = workingStock
     }
-    batch.update(doc(db, 'mealPlans', plan.id), { cooked: true })
+    // Snapshot the ingredients as-cooked, so editing the recipe later doesn't
+    // rewrite history.
+    batch.update(doc(db, 'mealPlans', plan.id), {
+      cooked: true,
+      snapshot: {
+        recipeName: recipe.name,
+        ingredients: recipe.ingredients || [],
+      },
+    })
   }
 
   for (const [itemId, stock] of Object.entries(stockDeltas)) {

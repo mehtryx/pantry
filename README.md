@@ -14,15 +14,18 @@ A personal PWA for tracking household food inventory, grocery lists, and meal pl
 - Metric and imperial units (g, kg, mL, L, cup, tbsp, tsp, count, package)
 - Grocery list with autocomplete against existing items, per-item store tagging, and a "checkout mode" with enlarged tap targets for shopping
 - Automatic three-quantity tracking per item (on-hand, incoming, reserved) with color-coded status
+- Recipe library — create, edit, duplicate, delete recipes with per-ingredient quantities and pantry-item autocomplete
+- 9-day meal planner with breakfast/lunch/dinner slots, multiple entries per slot, and quick "leftover" placeholders that don't consume stock
+- Reservations from planned meals automatically add shortfalls to the grocery list; removing a plan cleans them up
+- Auto-cook: meals planned for past dates automatically drain their ingredients from stock (defaults to your location display order; Phase 2 v1.2 will add per-meal source overrides)
+- Meal history: past cooked meals kept as snapshots so editing recipes later doesn't rewrite history; individually deletable, and a bulk purge for anything older than 30 days
 - Household-shared data — everyone in the household sees the same pantry
 - 6 color palettes × light/dark/auto modes × small/medium/large font size — all persist per device
 - Offline-capable PWA installable on iOS/Android home screen
-- Auto-cook: meals planned for past dates automatically drain their ingredients from stock (Phase 2 will refine this per-meal)
 
 **Roadmap (not yet built):**
-- Recipe library
-- 9-day meal planner with per-meal location/quantity selection
-- Automatic grocery list reconciliation from planned meals
+- Per-meal ingredient sourcing (choose which locations to draw from for each ingredient) — Phase 2 v1.2
+- Additional recipe fields UI (servings, notes/instructions, prep/cook times, tags, photos) — Phase 3
 
 ---
 
@@ -264,9 +267,9 @@ All of these live under Settings and persist per device (each household member c
 Four Firestore collections, all keyed on `householdId` (which equals your email domain):
 
 - **`items`** — pantry items with per-location stock, unit, name
-- **`grocery`** — grocery list entries; each links back to an item once bought
-- **`recipes`** — (not yet used) recipe library for meal planner
-- **`mealPlans`** — (not yet used) date + slot + recipe assignments
+- **`grocery`** — grocery list entries; each links back to an item once bought, plus auto-added entries from meal-plan shortfalls
+- **`recipes`** — recipe library with name, ingredients (each linked to an itemId), plus placeholder fields for Phase 3 (servings, notes, prep/cook times, tags, photo)
+- **`mealPlans`** — date + slot + either `recipeId` or `leftoverText`, plus a `snapshot` written at auto-cook time so history stays stable when recipes change
 
 Plus a **`households`** collection with one doc per domain, tracking members and storage-location configuration.
 
@@ -367,13 +370,14 @@ src/
     UI.jsx               — Button, Input, Card, Modal, EmptyState
     BottomNav.jsx        — tab bar
     LocationsEditor.jsx  — rename/add/remove/reorder storage locations
+    RecipeEditor.jsx     — create/edit recipe with ingredient autocomplete
   pages/
     SignInPage.jsx       — pre-auth screen
-    PantryPage.jsx       — house inventory
+    PantryPage.jsx       — house inventory (with Put Away chip when items are waiting)
     GroceryPage.jsx      — grocery list
-    PutAwayPage.jsx      — assign locations to bought items
-    MealsPage.jsx        — (Phase 2 placeholder)
-    RecipesPage.jsx      — (Phase 2 placeholder)
+    PutAwayPage.jsx      — assign locations to bought items (accessed via chip)
+    MealsPage.jsx        — 9-day meal planner with history
+    RecipesPage.jsx      — recipe library
     SettingsPage.jsx     — palette, mode, font size, locations, sign out, backup
 
 firestore.rules          — security rules (paste into Firebase console)
