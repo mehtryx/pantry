@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Sun, Moon, Monitor, Download, LogOut, CheckCircle2, MapPin } from 'lucide-react'
-import { useTheme } from '../contexts/ThemeContext'
+import { useTheme, FONT_SIZES, FONT_SIZE_ORDER } from '../contexts/ThemeContext'
 import { useData } from '../contexts/DataContext'
 import { signOutUser } from '../lib/firebase'
 import { Button, Card } from '../components/UI'
@@ -9,7 +9,7 @@ import { PALETTES, PALETTE_ORDER } from '../lib/palettes'
 import pkg from '../../package.json'
 
 export default function SettingsPage() {
-  const { mode, setMode, palette, setPalette } = useTheme()
+  const { mode, setMode, palette, setPalette, fontSize, setFontSize } = useTheme()
   const { items, grocery, recipes, mealPlans, user, storageLocations } = useData()
   const [showLocations, setShowLocations] = useState(false)
 
@@ -68,6 +68,20 @@ export default function SettingsPage() {
       </Card>
 
       <Card className="p-4 mb-4">
+        <h3 className="text-sm font-medium text-muted mb-3">Font Size</h3>
+        <div className="grid grid-cols-3 gap-2">
+          {FONT_SIZE_ORDER.map(key => (
+            <FontSizeButton
+              key={key}
+              active={fontSize === key}
+              onClick={() => setFontSize(key)}
+              sizeKey={key}
+            />
+          ))}
+        </div>
+      </Card>
+
+      <Card className="p-4 mb-4">
         <h3 className="text-sm font-medium text-muted mb-2">Locations</h3>
         <div className="text-xs text-muted mb-3">
           {storageLocations.length} storage {storageLocations.length === 1 ? 'location' : 'locations'} configured
@@ -110,6 +124,25 @@ function ModeButton({ active, onClick, icon: Icon, label }) {
     >
       <Icon className="w-5 h-5" />
       <span className="text-xs">{label}</span>
+    </button>
+  )
+}
+
+function FontSizeButton({ active, onClick, sizeKey }) {
+  const cfg = FONT_SIZES[sizeKey]
+  // Preview letter grows with each step so she can see the relative size at a glance
+  const previewSizeMap = { small: 'text-base', medium: 'text-xl', large: 'text-2xl' }
+  return (
+    <button
+      onClick={onClick}
+      className={`flex flex-col items-center justify-center gap-1 py-3 rounded-xl border transition-colors min-h-[64px] ${
+        active
+          ? 'bg-primary border-primary text-primary-fg'
+          : 'border-border text-muted'
+      }`}
+    >
+      <span className={`font-semibold leading-none ${previewSizeMap[sizeKey]}`}>A</span>
+      <span className="text-xs">{cfg.label}</span>
     </button>
   )
 }

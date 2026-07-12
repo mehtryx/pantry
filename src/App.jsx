@@ -37,7 +37,7 @@ function Shell() {
   }
 
   return (
-    <div className="min-h-screen bg-bg pb-20">
+    <div className="min-h-screen bg-bg pb-28">
       <div className="max-w-2xl mx-auto safe-top">
         {ready ? (
           <Routes>

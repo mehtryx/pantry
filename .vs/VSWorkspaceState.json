@@ -1,0 +1,13 @@
+{
+  "ExpandedNodes": [
+    "",
+    "\\public",
+    "\\src",
+    "\\src\\components",
+    "\\src\\contexts",
+    "\\src\\lib",
+    "\\src\\pages"
+  ],
+  "SelectedNode": "\\src\\lib\\firebase.js",
+  "PreviewInSolutionExplorer": false
+}
