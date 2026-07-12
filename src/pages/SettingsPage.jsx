@@ -130,7 +130,7 @@ function ModeButton({ active, onClick, icon: Icon, label }) {
 
 function FontSizeButton({ active, onClick, sizeKey }) {
   const cfg = FONT_SIZES[sizeKey]
-  // Preview letter grows with each step so she can see the relative size at a glance
+  // Preview letter grows with each step so the user can see the relative size at a glance
   const previewSizeMap = { small: 'text-base', medium: 'text-xl', large: 'text-2xl' }
   return (
     <button

@@ -10,18 +10,18 @@ A personal PWA for tracking household food inventory, grocery lists, and meal pl
 
 ## Features
 
-- Multi-location inventory (7 storage locations plus a "Waiting to be Stored" staging area)
-- Metric + Imperial units (g, kg, mL, L, cup, tbsp, tsp, count, package)
+- Multi-location inventory (7 default storage locations plus a protected "Waiting to be Stored" staging area; storage locations are user-editable — rename, add, remove, reorder)
+- Metric and imperial units (g, kg, mL, L, cup, tbsp, tsp, count, package)
 - Grocery list with autocomplete against existing items, per-item store tagging, and a "checkout mode" with enlarged tap targets for shopping
 - Automatic three-quantity tracking per item (on-hand, incoming, reserved) with color-coded status
-- Household-shared data — everyone in the family sees the same pantry
-- 6 color palettes × light/dark/auto modes
+- Household-shared data — everyone in the household sees the same pantry
+- 6 color palettes × light/dark/auto modes × small/medium/large font size — all persist per device
 - Offline-capable PWA installable on iOS/Android home screen
-- Auto-cook: meals planned for past dates automatically drain their ingredients from stock
+- Auto-cook: meals planned for past dates automatically drain their ingredients from stock (Phase 2 will refine this per-meal)
 
 **Roadmap (not yet built):**
 - Recipe library
-- 9-day meal planner
+- 9-day meal planner with per-meal location/quantity selection
 - Automatic grocery list reconciliation from planned meals
 
 ---
@@ -38,7 +38,7 @@ You'll need:
 - A **GitHub account** (free) — https://github.com
 - A **Google account** for Firebase
 - A **Cloudflare account** (free) — https://dash.cloudflare.com/sign-up
-- A Google Workspace or shared email domain if you want to restrict access. If you just want to use personal Gmail addresses, that works too — see "Optional: domain restriction" below.
+- A Google Workspace or shared email domain if you want to restrict access. If you'd rather use personal Gmail addresses, that works too — see "Optional: domain restriction" below.
 
 Verify Node is installed by opening a terminal and running:
 ```
@@ -72,7 +72,7 @@ Firebase provides the database (Firestore) and authentication. The Spark plan (f
 4. When asked about **Google Analytics**, turn it **off** (not needed, simpler without it) and click **Create project**
 5. Wait a minute, then click **Continue**
 
-#### 2b. Enable Anonymous + Google authentication
+#### 2b. Enable Anonymous and Google authentication
 
 1. Left sidebar → **Build → Authentication**
 2. Click **Get started**
@@ -83,7 +83,7 @@ Firebase provides the database (Firestore) and authentication. The Spark plan (f
    - **Project support email:** pick your email from the dropdown
    - Click **Save**
 
-Anonymous is needed as an initial placeholder auth state before the user signs in with Google. Google is what she actually uses.
+Anonymous is needed as an initial placeholder auth state before the user signs in with Google. Google is what your household members actually use.
 
 #### 2c. Create the Firestore database
 
@@ -215,16 +215,16 @@ If you skip this step, Google sign-in on the deployed URL will silently fail.
 
 ---
 
-### Step 7: Install on her phone
+### Step 7: Install on a phone
 
 1. Open the `pages.dev` URL in Safari (iOS) or Chrome (Android)
 2. Sign in with Google
-3. Verify she lands in the Pantry
+3. Verify you land in the Pantry
 4. Install to home screen:
    - **iOS:** tap Share → **Add to Home Screen**
    - **Android:** Chrome may prompt automatically, or tap ⋮ → **Install app**
 
-The icon lives on her home screen and opens full-screen like a native app.
+The icon lives on the home screen and opens full-screen like a native app.
 
 Repeat for any other household member on their own phone. They sign in with their own Google account (if their email matches your allowed domain, they instantly share the same pantry data).
 
@@ -232,7 +232,7 @@ Repeat for any other household member on their own phone. They sign in with thei
 
 ## Ongoing: updating the app
 
-Any time code changes:
+Any time the code changes:
 
 ```
 git add .
@@ -240,11 +240,22 @@ git commit -m "describe the change"
 git push
 ```
 
-Cloudflare Pages auto-builds and deploys within ~2 minutes. She'll get the new version next time she opens the app.
+Cloudflare Pages auto-builds and deploys within ~2 minutes. Users get the new version next time they open the app.
 
 **If you change environment variables** on Cloudflare, you must manually trigger a rebuild (env vars are baked in at build time): Cloudflare dashboard → your project → Deployments → three-dot menu on latest → **Retry deployment**.
 
 **If you change Firestore rules**, publish them via the Firebase console. No deploy needed.
+
+---
+
+## Customization inside the app
+
+All of these live under Settings and persist per device (each household member can pick their own):
+
+- **Palette:** Sage, Terracotta, Ocean, Honey, Wine, Slate
+- **Mode:** Light, Dark, Auto (follows system)
+- **Font Size:** Small, Medium, Large — scales the entire app proportionally
+- **Locations:** rename, add, remove, or reorder storage locations. Location changes ARE shared across the household in real time.
 
 ---
 
@@ -257,7 +268,7 @@ Four Firestore collections, all keyed on `householdId` (which equals your email 
 - **`recipes`** — (not yet used) recipe library for meal planner
 - **`mealPlans`** — (not yet used) date + slot + recipe assignments
 
-Plus a **`households`** collection with one doc per domain, tracking members for reference.
+Plus a **`households`** collection with one doc per domain, tracking members and storage-location configuration.
 
 Rules enforce that only signed-in users on the allowed domain can read or write, and only within their own household.
 
@@ -302,7 +313,7 @@ Anyone who signs in with any Google account will get their own separate househol
 → Firestore rules didn't publish, or the account you're signed in with doesn't match your allowed domain. Check both.
 
 **"This app is restricted. Please sign in with an authorized account."**
-→ Working as intended if you're signed in with a non-matching email. Sign out, sign in with your allowed-domain email.
+→ Working as intended if you're signed in with a non-matching email. Sign out, sign in with an allowed-domain email.
 
 **Deployed app is blank**
 → Environment variables not set on Cloudflare Pages. Add them, then trigger a rebuild.
@@ -311,10 +322,10 @@ Anyone who signs in with any Google account will get their own separate househol
 → Your `pages.dev` URL isn't in Firebase's authorized domains list (step 6a).
 
 **Deployed app still shows old version after pushing**
-→ Cloudflare hasn't rebuilt yet (check Deployments page), OR the PWA service worker on her phone hasn't updated. She should force-close the PWA and reopen it. In stubborn cases, delete and reinstall the PWA to the home screen.
+→ Cloudflare hasn't rebuilt yet (check Deployments page), OR the PWA service worker hasn't updated. Force-close the PWA and reopen it. In stubborn cases, delete and reinstall the PWA to the home screen.
 
-**She's signed in on Safari but the installed PWA still shows the sign-in screen**
-→ iOS keeps separate auth storage for Safari vs installed PWAs. She needs to sign in inside the PWA specifically. Tap the Pantry icon on her home screen → sign in there.
+**Signed in on Safari but the installed PWA still shows the sign-in screen**
+→ iOS keeps separate auth storage for Safari vs installed PWAs. Sign in inside the PWA specifically: tap the Pantry icon on the home screen → sign in there.
 
 **Firebase Authentication → Users list shows multiple accounts for the same person**
 → Anonymous placeholder sessions accumulate from testing. Delete anonymous users (keep the Google-authenticated ones).
@@ -346,7 +357,7 @@ src/
   index.css              — tailwind + theme variables
   contexts/
     DataContext.jsx      — Firestore subscriptions + mutations
-    ThemeContext.jsx     — palette + mode state
+    ThemeContext.jsx     — palette + mode + font size state
   lib/
     firebase.js          — auth + Firestore init
     constants.js         — locations, units, quantity formatter
@@ -363,7 +374,7 @@ src/
     PutAwayPage.jsx      — assign locations to bought items
     MealsPage.jsx        — (Phase 2 placeholder)
     RecipesPage.jsx      — (Phase 2 placeholder)
-    SettingsPage.jsx     — palette, mode, locations, sign out, backup
+    SettingsPage.jsx     — palette, mode, font size, locations, sign out, backup
 
 firestore.rules          — security rules (paste into Firebase console)
 .env.example             — template for local env vars
@@ -372,3 +383,9 @@ tailwind.config.js       — semantic color tokens
 history/                 — per-version release notes
 README.md                — this file
 ```
+
+---
+
+## Contributing to README maintenance
+
+When adding a new feature or setting in a release, update the **Features** section at the top and the **Customization inside the app** section if it's user-facing. If the data model changes, update **Data model overview**. Keeping the README current with each release keeps setup instructions and roadmap trustworthy.
