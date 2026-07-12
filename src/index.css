@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light dark;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: #faf7f2;
+  color: #2d3c2a;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+
+.dark body {
+  background: #1f2a1d;
+  color: #dde5d8;
+}
+
+/* iOS safe area */
+.safe-top { padding-top: env(safe-area-inset-top); }
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+
+/* Prevent double-tap zoom on buttons */
+button { touch-action: manipulation; }
+
+/* Slightly nicer focus rings */
+button:focus-visible, input:focus-visible, select:focus-visible {
+  outline: 2px solid #7a9471;
+  outline-offset: 2px;
+}
+
+/* Hide number input spinners */
+input[type=number]::-webkit-inner-spin-button,
+input[type=number]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type=number] { -moz-appearance: textfield; }
