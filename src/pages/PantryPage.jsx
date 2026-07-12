@@ -8,7 +8,7 @@ import { Button, Input, Select, Card, Modal, EmptyState } from '../components/UI
 
 export default function PantryPage() {
   const navigate = useNavigate()
-  const { items, grocery, reservations, addItem, updateItem, setItemLocationQty, deleteItem, storageLocations, allLocations, locationLookup } = useData()
+  const { items, grocery, reservations, addItem, updateItem, setItemLocationQty, deleteItem, storageLocations, allLocations, locationLookup, departments, departmentLookup } = useData()
   const [search, setSearch] = useState('')
   const [sortBy, setSortBy] = useState('name')
   const [filterLoc, setFilterLoc] = useState('all')
@@ -64,6 +64,14 @@ export default function PantryPage() {
         const lb = primaryLocation(b) || ''
         return la.localeCompare(lb) || a.name.localeCompare(b.name)
       })
+    } else if (sortBy === 'department') {
+      // Use household department order; unassigned goes last
+      const deptOrder = new Map(departments.map((d, i) => [d.id, i]))
+      list.sort((a, b) => {
+        const oa = a.department ? (deptOrder.get(a.department) ?? 998) : 999
+        const ob = b.department ? (deptOrder.get(b.department) ?? 998) : 999
+        return oa - ob || a.name.localeCompare(b.name)
+      })
     } else if (sortBy === 'status') {
       const order = { 'red-under': 0, 'red-over': 1, yellow: 2, green: 3, neutral: 4 }
       list.sort((a, b) => {
@@ -73,7 +81,7 @@ export default function PantryPage() {
       })
     }
     return list
-  }, [items, grocery, reservations, search, sortBy, filterLoc])
+  }, [items, grocery, reservations, search, sortBy, filterLoc, departments])
 
   return (
     <div className="px-4 pt-4">
@@ -111,6 +119,7 @@ export default function PantryPage() {
         <Select value={sortBy} onChange={e => setSortBy(e.target.value)} className="text-sm">
           <option value="name">Sort: Name</option>
           <option value="location">Sort: Location</option>
+          <option value="department">Sort: Department</option>
           <option value="status">Sort: Status</option>
         </Select>
         <Select value={filterLoc} onChange={e => setFilterLoc(e.target.value)} className="text-sm">
@@ -129,32 +138,24 @@ export default function PantryPage() {
           description={items.length === 0 ? 'Add your first pantry item to get started.' : 'Try adjusting your search or filter.'}
           action={items.length === 0 && <Button onClick={() => setShowAdd(true)}><Plus className="w-4 h-4" /> Add Item</Button>}
         />
+      ) : sortBy === 'department' ? (
+        <GroupedList
+          items={filtered}
+          groupBy={item => item.department || null}
+          groupLabel={id => id ? (departmentLookup[id] || id) : 'No department'}
+          renderItem={item => <PantryRow item={item} grocery={grocery} reservations={reservations} locationLookup={locationLookup} onClick={() => setDetailItem(item)} />}
+        />
       ) : (
         <ul className="space-y-2">
-          {filtered.map(item => {
-            const st = computeItemStatus(item, grocery, reservations[item.id] || 0)
-            return (
-              <li key={item.id}>
-                <Card className="p-3 flex items-center gap-3 active:bg-surface2 dark:active:bg-surface2" onClick={() => setDetailItem(item)}>
-                  <div className={`w-3 h-3 rounded-full flex-shrink-0 ${STATUS_COLORS[st.status]}`} title={STATUS_LABELS[st.status]} />
-                  <div className="flex-1 min-w-0">
-                    <div className="font-medium text-body truncate">{item.name}</div>
-                    <div className="text-xs text-muted truncate">
-                      {stockSummary(item, locationLookup)}
-                    </div>
-                  </div>
-                  <div className="text-right text-xs text-muted">
-                    {st.reserved > 0 && <div>Reserved: {formatQty(st.reserved, item.unit)}</div>}
-                    {st.status === 'red-over' && <div className="text-danger">On list, have plenty</div>}
-                  </div>
-                </Card>
-              </li>
-            )
-          })}
+          {filtered.map(item => (
+            <li key={item.id}>
+              <PantryRow item={item} grocery={grocery} reservations={reservations} locationLookup={locationLookup} onClick={() => setDetailItem(item)} />
+            </li>
+          ))}
         </ul>
       )}
 
-      <AddItemModal open={showAdd} onClose={() => setShowAdd(false)} onAdd={addItem} storageLocations={storageLocations} />
+      <AddItemModal open={showAdd} onClose={() => setShowAdd(false)} onAdd={addItem} storageLocations={storageLocations} departments={departments} />
       <ItemDetailModal
         item={detailItem}
         onClose={() => setDetailItem(null)}
@@ -162,7 +163,62 @@ export default function PantryPage() {
         updateItem={updateItem}
         deleteItem={(id) => { deleteItem(id); setDetailItem(null) }}
         storageLocations={storageLocations}
+        departments={departments}
       />
+    </div>
+  )
+}
+
+function PantryRow({ item, grocery, reservations, locationLookup, onClick }) {
+  const st = computeItemStatus(item, grocery, reservations[item.id] || 0)
+  return (
+    <Card className="p-3 flex items-center gap-3 active:bg-surface2 dark:active:bg-surface2" onClick={onClick}>
+      <div className={`w-3 h-3 rounded-full flex-shrink-0 ${STATUS_COLORS[st.status]}`} title={STATUS_LABELS[st.status]} />
+      <div className="flex-1 min-w-0">
+        <div className="font-medium text-body truncate">{item.name}</div>
+        <div className="text-xs text-muted truncate">
+          {stockSummary(item, locationLookup)}
+        </div>
+      </div>
+      <div className="text-right text-xs text-muted">
+        {st.reserved > 0 && <div>Reserved: {formatQty(st.reserved, item.unit)}</div>}
+        {st.status === 'red-over' && <div className="text-danger">On list, have plenty</div>}
+      </div>
+    </Card>
+  )
+}
+
+/**
+ * Renders a list grouped by a key, with a section header above each group.
+ * Preserves the order of items as given (caller does the sorting).
+ */
+function GroupedList({ items, groupBy, groupLabel, renderItem }) {
+  const groups = []
+  let currentKey = Symbol('unset')
+  let currentList = null
+  for (const item of items) {
+    const key = groupBy(item)
+    if (key !== currentKey) {
+      currentList = { key, label: groupLabel(key), items: [] }
+      groups.push(currentList)
+      currentKey = key
+    }
+    currentList.items.push(item)
+  }
+  return (
+    <div className="space-y-4">
+      {groups.map((group, gi) => (
+        <div key={gi}>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted mb-2 px-1">
+            {group.label}
+          </h3>
+          <ul className="space-y-2">
+            {group.items.map(item => (
+              <li key={item.id}>{renderItem(item)}</li>
+            ))}
+          </ul>
+        </div>
+      ))}
     </div>
   )
 }
@@ -181,23 +237,26 @@ function primaryLocation(item) {
   return entries[0]?.[0]
 }
 
-function AddItemModal({ open, onClose, onAdd, storageLocations }) {
+function AddItemModal({ open, onClose, onAdd, storageLocations, departments }) {
   const [name, setName] = useState('')
   const [unit, setUnit] = useState('count')
   const [location, setLocation] = useState('')
+  const [department, setDepartment] = useState('')
   const [qty, setQty] = useState('1')
 
-  // Default location to first available when list changes / modal opens
   useEffect(() => {
     if (!location && storageLocations.length > 0) {
       setLocation(storageLocations[0].id)
     }
   }, [storageLocations, location])
 
-  function reset() { setName(''); setUnit('count'); setLocation(storageLocations[0]?.id || ''); setQty('1') }
+  function reset() {
+    setName(''); setUnit('count'); setLocation(storageLocations[0]?.id || '')
+    setDepartment(''); setQty('1')
+  }
   async function submit() {
     if (!name.trim() || !location) return
-    await onAdd({ name, unit, location, quantity: Number(qty) })
+    await onAdd({ name, unit, location, quantity: Number(qty), department: department || null })
     reset(); onClose()
   }
 
@@ -226,6 +285,13 @@ function AddItemModal({ open, onClose, onAdd, storageLocations }) {
             {storageLocations.map(l => <option key={l.id} value={l.id}>{l.label}</option>)}
           </Select>
         </div>
+        <div>
+          <label className="text-sm text-muted mb-1 block">Department (optional)</label>
+          <Select value={department} onChange={e => setDepartment(e.target.value)}>
+            <option value="">No department</option>
+            {departments.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}
+          </Select>
+        </div>
         <div className="flex gap-2 pt-2">
           <Button variant="secondary" onClick={onClose} className="flex-1">Cancel</Button>
           <Button onClick={submit} className="flex-1">Add</Button>
@@ -235,7 +301,7 @@ function AddItemModal({ open, onClose, onAdd, storageLocations }) {
   )
 }
 
-function ItemDetailModal({ item, onClose, setItemLocationQty, updateItem, deleteItem, storageLocations }) {
+function ItemDetailModal({ item, onClose, setItemLocationQty, updateItem, deleteItem, storageLocations, departments }) {
   const [editingName, setEditingName] = useState(false)
   const [nameDraft, setNameDraft] = useState('')
 
@@ -284,6 +350,17 @@ function ItemDetailModal({ item, onClose, setItemLocationQty, updateItem, delete
                 onChange={n => setItemLocationQty(item.id, location, n)} />
             ))}
           </ul>
+        </div>
+
+        <div>
+          <h4 className="text-sm font-medium text-muted mb-2">Department</h4>
+          <Select
+            value={item.department || ''}
+            onChange={e => updateItem(item.id, { department: e.target.value || null })}
+          >
+            <option value="">No department</option>
+            {departments.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}
+          </Select>
         </div>
 
         <div className="pt-2 border-t border-border">

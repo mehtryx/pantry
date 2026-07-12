@@ -11,6 +11,7 @@ A personal PWA for tracking household food inventory, grocery lists, and meal pl
 ## Features
 
 - Multi-location inventory (7 default storage locations plus a protected "Waiting to be Stored" staging area; storage locations are user-editable — rename, add, remove, reorder)
+- Departments for organizing items by aisle/section (Produce, Dairy, Frozen, etc.); user-editable list; grocery list and pantry can be sorted and grouped by department
 - Metric and imperial units (g, kg, mL, L, cup, tbsp, tsp, count, package)
 - Grocery list with autocomplete against existing items, per-item store tagging, and a "checkout mode" with enlarged tap targets for shopping
 - Automatic three-quantity tracking per item (on-hand, incoming, reserved) with color-coded status
@@ -259,6 +260,7 @@ All of these live under Settings and persist per device (each household member c
 - **Mode:** Light, Dark, Auto (follows system)
 - **Font Size:** Small, Medium, Large — scales the entire app proportionally
 - **Locations:** rename, add, remove, or reorder storage locations. Location changes ARE shared across the household in real time.
+- **Departments:** rename, add, remove, or reorder grocery departments. Order controls how items group in the sorted grocery list. Shared across the household.
 
 ---
 
@@ -266,12 +268,12 @@ All of these live under Settings and persist per device (each household member c
 
 Four Firestore collections, all keyed on `householdId` (which equals your email domain):
 
-- **`items`** — pantry items with per-location stock, unit, name
+- **`items`** — pantry items with per-location stock, unit, name, and optional department
 - **`grocery`** — grocery list entries; each links back to an item once bought, plus auto-added entries from meal-plan shortfalls
 - **`recipes`** — recipe library with name, ingredients (each linked to an itemId), plus placeholder fields for Phase 3 (servings, notes, prep/cook times, tags, photo)
 - **`mealPlans`** — date + slot + either `recipeId` or `leftoverText`, plus a `snapshot` written at auto-cook time so history stays stable when recipes change
 
-Plus a **`households`** collection with one doc per domain, tracking members and storage-location configuration.
+Plus a **`households`** collection with one doc per domain, tracking members, storage-location configuration, and department configuration.
 
 Rules enforce that only signed-in users on the allowed domain can read or write, and only within their own household.
 
@@ -370,6 +372,7 @@ src/
     UI.jsx               — Button, Input, Card, Modal, EmptyState
     BottomNav.jsx        — tab bar
     LocationsEditor.jsx  — rename/add/remove/reorder storage locations
+    DepartmentsEditor.jsx — rename/add/remove/reorder grocery departments
     RecipeEditor.jsx     — create/edit recipe with ingredient autocomplete
     MealPlanDetail.jsx   — expand a planned meal and assign per-ingredient sources
   pages/

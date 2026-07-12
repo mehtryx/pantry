@@ -6,7 +6,7 @@ import {
 } from 'firebase/firestore'
 import { db, auth, initAuth, ensureHouseholdMembership, householdIdForEmail } from '../lib/firebase'
 import { onAuthStateChanged } from 'firebase/auth'
-import { WAITING, DEFAULT_STORAGE_LOCATIONS, buildLocationLookup, fullLocationList } from '../lib/constants'
+import { WAITING, DEFAULT_STORAGE_LOCATIONS, DEFAULT_DEPARTMENTS, buildLocationLookup, fullLocationList, buildDepartmentLookup } from '../lib/constants'
 
 const DataContext = createContext(null)
 export const useData = () => useContext(DataContext)
@@ -16,6 +16,7 @@ export function DataProvider({ children }) {
   const [authError, setAuthError] = useState(null)
   const [householdId, setHouseholdId] = useState(null)
   const [storageLocations, setStorageLocations] = useState(DEFAULT_STORAGE_LOCATIONS)
+  const [departments, setDepartments] = useState(DEFAULT_DEPARTMENTS)
   const [ready, setReady] = useState(false)
   const [items, setItems] = useState([])
   const [grocery, setGrocery] = useState([])
@@ -62,25 +63,36 @@ export function DataProvider({ children }) {
     if (!user || !householdId) {
       setItems([]); setGrocery([]); setRecipes([]); setMealPlans([])
       setStorageLocations(DEFAULT_STORAGE_LOCATIONS)
+      setDepartments(DEFAULT_DEPARTMENTS)
       setReady(!!user)
       return
     }
 
     const scoped = [where('householdId', '==', householdId)]
 
-    // Household doc — for shared settings like storage locations
+    // Household doc — for shared settings like storage locations and departments
     const unsubHousehold = onSnapshot(doc(db, 'households', householdId), snap => {
       if (!snap.exists()) return
       const data = snap.data()
+
+      // Locations
       if (Array.isArray(data.locations) && data.locations.length > 0) {
         setStorageLocations(data.locations)
       } else {
-        // First run under v0.8: seed defaults into the household doc.
-        // Any concurrent writer will just overwrite with the same values.
         updateDoc(doc(db, 'households', householdId), {
           locations: DEFAULT_STORAGE_LOCATIONS,
         }).catch(err => console.warn('Failed to seed default locations:', err))
         setStorageLocations(DEFAULT_STORAGE_LOCATIONS)
+      }
+
+      // Departments
+      if (Array.isArray(data.departments) && data.departments.length > 0) {
+        setDepartments(data.departments)
+      } else {
+        updateDoc(doc(db, 'households', householdId), {
+          departments: DEFAULT_DEPARTMENTS,
+        }).catch(err => console.warn('Failed to seed default departments:', err))
+        setDepartments(DEFAULT_DEPARTMENTS)
       }
     })
 
@@ -143,7 +155,7 @@ export function DataProvider({ children }) {
   // Every write gets tagged with the household ID
   const scopeFields = () => ({ householdId })
 
-  async function addItem({ name, unit, location, quantity }) {
+  async function addItem({ name, unit, location, quantity, department }) {
     const stock = {}
     if (location && (Number(quantity) || 0) > 0) {
       stock[location] = Number(quantity)
@@ -151,6 +163,7 @@ export function DataProvider({ children }) {
     const ref = await addDoc(collection(db, 'items'), {
       ...scopeFields(),
       name: name.trim(), unit, stock, stores: [],
+      department: department || null,
       createdAt: serverTimestamp(), updatedAt: serverTimestamp()
     })
     return ref.id
@@ -467,18 +480,94 @@ export function DataProvider({ children }) {
     }
   }
 
+  // ---------- Department Management ----------
+
+  async function renameDepartment(id, newLabel) {
+    const trimmed = newLabel.trim()
+    if (!trimmed) return
+    const ref = doc(db, 'households', householdId)
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref)
+      if (!snap.exists()) return
+      const cur = snap.data().departments || []
+      const next = cur.map(d => d.id === id ? { ...d, label: trimmed } : d)
+      tx.update(ref, { departments: next })
+    })
+  }
+
+  async function addDepartment(label, id) {
+    const trimmed = label.trim()
+    if (!trimmed) return
+    const ref = doc(db, 'households', householdId)
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref)
+      if (!snap.exists()) return
+      const cur = snap.data().departments || []
+      const existing = new Set(cur.map(d => d.id))
+      let candidate = id
+      if (existing.has(candidate)) {
+        let n = 2
+        while (existing.has(`${candidate}_${n}`)) n++
+        candidate = `${candidate}_${n}`
+      }
+      const next = [...cur, { id: candidate, label: trimmed }]
+      tx.update(ref, { departments: next })
+    })
+  }
+
+  async function reorderDepartments(orderedIds) {
+    const ref = doc(db, 'households', householdId)
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref)
+      if (!snap.exists()) return
+      const cur = snap.data().departments || []
+      const byId = Object.fromEntries(cur.map(d => [d.id, d]))
+      const next = orderedIds.map(id => byId[id]).filter(Boolean)
+      tx.update(ref, { departments: next })
+    })
+  }
+
+  /**
+   * Delete a department. Any items assigned to it get their department cleared
+   * (set to null) — the items themselves aren't touched otherwise.
+   */
+  async function deleteDepartment(id) {
+    const ref = doc(db, 'households', householdId)
+
+    // Update household departments transactionally
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref)
+      if (!snap.exists()) return
+      const cur = snap.data().departments || []
+      const next = cur.filter(d => d.id !== id)
+      tx.update(ref, { departments: next })
+    })
+
+    // Clear the department field on all items that referenced this department
+    const affected = items.filter(item => item.department === id)
+    for (const item of affected) {
+      await updateDoc(doc(db, 'items', item.id), {
+        department: deleteField(),
+        updatedAt: serverTimestamp(),
+      })
+    }
+  }
+
   const value = {
     user, ready, authError, clearAuthError: () => setAuthError(null),
     householdId,
     storageLocations,
     locationLookup: buildLocationLookup(storageLocations),
     allLocations: fullLocationList(storageLocations),
+    departments,
+    departmentLookup: buildDepartmentLookup(departments),
     items, grocery, recipes, mealPlans, reservations,
     addItem, updateItem, setItemLocationQty, deleteItem,
     addGrocery, updateGrocery, deleteGrocery, setGroceryBought, putAway,
     addRecipe, updateRecipe, deleteRecipe, duplicateRecipe,
     addMealPlan, deleteMealPlan, updateMealPlanAssignments,
     renameLocation, addLocation, reorderLocations, deleteLocation,
+    renameDepartment, addDepartment, reorderDepartments, deleteDepartment,
   }
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>

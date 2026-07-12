@@ -92,37 +92,41 @@ export default function RecipeEditor({ open, recipe, onClose, onSave }) {
 /** A row for an existing ingredient — quantity + unit editable, name/item fixed */
 function IngredientRow({ ingredient, onChange, onRemove }) {
   return (
-    <li className="bg-surface border border-border rounded-xl p-2.5 flex items-center gap-2">
-      <div className="flex-1 min-w-0">
-        <div className="text-sm text-body truncate">{ingredient.name}</div>
-        {!ingredient.itemId && (
-          <div className="text-xs text-subtle">not linked to a pantry item</div>
-        )}
+    <li className="bg-surface border border-border rounded-xl p-2.5">
+      <div className="flex items-start gap-2 mb-2">
+        <div className="flex-1 min-w-0">
+          <div className="text-sm text-body break-words">{ingredient.name}</div>
+          {!ingredient.itemId && (
+            <div className="text-xs text-subtle">not linked to a pantry item</div>
+          )}
+        </div>
+        <button onClick={onRemove} className="text-subtle hover:text-danger p-1 flex-shrink-0" aria-label="Remove">
+          <X className="w-4 h-4" />
+        </button>
       </div>
-      <input
-        type="number"
-        inputMode="decimal"
-        value={ingredient.quantity}
-        onChange={e => onChange({ quantity: e.target.value })}
-        className="w-16 px-2 py-1.5 rounded-lg border border-border bg-bg text-center text-sm"
-      />
-      <Select
-        value={ingredient.unit}
-        onChange={e => onChange({ unit: e.target.value })}
-        className="w-24 text-sm"
-      >
-        {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
-      </Select>
-      <button onClick={onRemove} className="text-subtle hover:text-danger p-1" aria-label="Remove">
-        <X className="w-4 h-4" />
-      </button>
+      <div className="flex items-center gap-2">
+        <input
+          type="number"
+          inputMode="decimal"
+          value={ingredient.quantity}
+          onChange={e => onChange({ quantity: e.target.value })}
+          className="w-20 px-2 py-1.5 rounded-lg border border-border bg-bg text-center text-sm"
+        />
+        <Select
+          value={ingredient.unit}
+          onChange={e => onChange({ unit: e.target.value })}
+          className="flex-1 text-sm"
+        >
+          {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+        </Select>
+      </div>
     </li>
   )
 }
 
 /** Adder — search for existing item OR create new */
 function IngredientAdder({ onAdd }) {
-  const { items, addItem } = useData()
+  const { items, addItem, departments } = useData()
   const [query, setQuery] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -153,6 +157,7 @@ function IngredientAdder({ onAdd }) {
 
   const [showCreate, setShowCreate] = useState(false)
   const [createUnit, setCreateUnit] = useState('count')
+  const [createDept, setCreateDept] = useState('')
 
   async function confirmCreate() {
     if (!query.trim()) return
@@ -165,6 +170,7 @@ function IngredientAdder({ onAdd }) {
         unit: createUnit,
         location: null, // zero everywhere
         quantity: 0,
+        department: createDept || null,
       })
       onAdd({
         itemId: newId,
@@ -173,6 +179,7 @@ function IngredientAdder({ onAdd }) {
         unit: createUnit,
       })
       setQuery('')
+      setCreateDept('')
       setShowCreate(false)
     } finally {
       setBusy(false)
@@ -186,9 +193,16 @@ function IngredientAdder({ onAdd }) {
           Create new pantry item: <strong>{query}</strong>
         </div>
         <div className="flex gap-2 items-center">
-          <label className="text-xs text-muted">Unit:</label>
+          <label className="text-xs text-muted w-16">Unit:</label>
           <Select value={createUnit} onChange={e => setCreateUnit(e.target.value)} className="flex-1 text-sm">
             {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+          </Select>
+        </div>
+        <div className="flex gap-2 items-center">
+          <label className="text-xs text-muted w-16">Dept:</label>
+          <Select value={createDept} onChange={e => setCreateDept(e.target.value)} className="flex-1 text-sm">
+            <option value="">(none)</option>
+            {departments.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}
           </Select>
         </div>
         <div className="flex gap-2">

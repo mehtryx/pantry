@@ -1,17 +1,19 @@
 import { useState } from 'react'
-import { Sun, Moon, Monitor, Download, LogOut, CheckCircle2, MapPin } from 'lucide-react'
+import { Sun, Moon, Monitor, Download, LogOut, CheckCircle2, MapPin, Tags } from 'lucide-react'
 import { useTheme, FONT_SIZES, FONT_SIZE_ORDER } from '../contexts/ThemeContext'
 import { useData } from '../contexts/DataContext'
 import { signOutUser } from '../lib/firebase'
 import { Button, Card } from '../components/UI'
 import LocationsEditor from '../components/LocationsEditor'
+import DepartmentsEditor from '../components/DepartmentsEditor'
 import { PALETTES, PALETTE_ORDER } from '../lib/palettes'
 import pkg from '../../package.json'
 
 export default function SettingsPage() {
   const { mode, setMode, palette, setPalette, fontSize, setFontSize } = useTheme()
-  const { items, grocery, recipes, mealPlans, user, storageLocations } = useData()
+  const { items, grocery, recipes, mealPlans, user, storageLocations, departments } = useData()
   const [showLocations, setShowLocations] = useState(false)
+  const [showDepartments, setShowDepartments] = useState(false)
 
   function exportData() {
     const data = { items, grocery, recipes, mealPlans, exportedAt: new Date().toISOString() }
@@ -92,6 +94,16 @@ export default function SettingsPage() {
       </Card>
 
       <Card className="p-4 mb-4">
+        <h3 className="text-sm font-medium text-muted mb-2">Departments</h3>
+        <div className="text-xs text-muted mb-3">
+          {departments.length} grocery {departments.length === 1 ? 'department' : 'departments'} configured
+        </div>
+        <Button variant="secondary" onClick={() => setShowDepartments(true)} className="w-full">
+          <Tags className="w-4 h-4" /> Edit Departments
+        </Button>
+      </Card>
+
+      <Card className="p-4 mb-4">
         <h3 className="text-sm font-medium text-muted mb-2">Data</h3>
         <div className="text-xs text-muted mb-3">
           {items.length} items · {grocery.length} grocery entries · {recipes.length} recipes · {mealPlans.length} meal plans
@@ -108,6 +120,7 @@ export default function SettingsPage() {
       </Card>
 
       <LocationsEditor open={showLocations} onClose={() => setShowLocations(false)} />
+      <DepartmentsEditor open={showDepartments} onClose={() => setShowDepartments(false)} />
     </div>
   )
 }

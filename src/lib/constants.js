@@ -48,6 +48,37 @@ export const UNITS = ['g', 'kg', 'mL', 'L', 'cup', 'tbsp', 'tsp', 'count', 'pack
 
 export const MEAL_SLOTS = ['breakfast', 'lunch', 'dinner']
 
+// Default departments — seeded into the household on first run.
+// Order here is the initial sort order; users can reorder from Settings.
+export const DEFAULT_DEPARTMENTS = [
+  { id: 'produce',     label: 'Produce' },
+  { id: 'meat_seafood', label: 'Meat & Seafood' },
+  { id: 'dairy_eggs',  label: 'Dairy & Eggs' },
+  { id: 'frozen',      label: 'Frozen' },
+  { id: 'bakery',      label: 'Bakery' },
+  { id: 'deli',        label: 'Deli' },
+  { id: 'pantry_dry',  label: 'Pantry' },
+  { id: 'beverages',   label: 'Beverages' },
+  { id: 'snacks',      label: 'Snacks' },
+  { id: 'household',   label: 'Household' },
+  { id: 'other',       label: 'Other' },
+]
+
+/** Generate a stable-ish ID from a user-entered label. */
+export function departmentIdFromLabel(label) {
+  const base = label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+  return base || `dept_${Date.now()}`
+}
+
+/** Look up a department label by id, falling back to the id itself. */
+export function buildDepartmentLookup(departments) {
+  const map = {}
+  for (const d of (departments || DEFAULT_DEPARTMENTS)) {
+    map[d.id] = d.label
+  }
+  return map
+}
+
 const SPACED_UNITS = new Set(['cup', 'count', 'package'])
 
 export function formatQty(quantity, unit) {

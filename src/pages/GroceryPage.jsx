@@ -1,15 +1,16 @@
 import { useState, useMemo } from 'react'
-import { Plus, ShoppingCart, Check, X, Store, Filter } from 'lucide-react'
+import { Plus, ShoppingCart, Check, X, Store } from 'lucide-react'
 import { useData } from '../contexts/DataContext'
 import { UNITS, formatQty } from '../lib/constants'
 import { computeItemStatus } from '../lib/status'
 import { Button, Input, Select, Card, Modal, EmptyState } from '../components/UI'
 
 export default function GroceryPage() {
-  const { grocery, items, reservations, addGrocery, deleteGrocery, setGroceryBought } = useData()
+  const { grocery, items, reservations, addGrocery, deleteGrocery, setGroceryBought, departments, departmentLookup } = useData()
   const [showAdd, setShowAdd] = useState(false)
   const [checkoutMode, setCheckoutMode] = useState(false)
   const [storeFilter, setStoreFilter] = useState('all')
+  const [sortBy, setSortBy] = useState('added') // added, name, department
 
   const allStores = useMemo(() => {
     const s = new Set()
@@ -27,6 +28,31 @@ export default function GroceryPage() {
     return active.filter(g => g.store === storeFilter)
   }, [active, storeFilter])
 
+  // Look up department id for a grocery entry (via its linked pantry item)
+  function groceryDept(g) {
+    if (!g.itemId) return null
+    const item = items.find(i => i.id === g.itemId)
+    return item?.department || null
+  }
+
+  const sortedActive = useMemo(() => {
+    const list = [...filteredActive]
+    if (sortBy === 'name') {
+      list.sort((a, b) => a.name.localeCompare(b.name))
+    } else if (sortBy === 'department') {
+      const deptOrder = new Map(departments.map((d, i) => [d.id, i]))
+      list.sort((a, b) => {
+        const da = groceryDept(a)
+        const db = groceryDept(b)
+        const oa = da ? (deptOrder.get(da) ?? 998) : 999
+        const ob = db ? (deptOrder.get(db) ?? 998) : 999
+        return oa - ob || a.name.localeCompare(b.name)
+      })
+    }
+    // 'added' = natural Firestore order — leave as-is
+    return list
+  }, [filteredActive, sortBy, departments, items])
+
   return (
     <div className="px-4 pt-4">
       <header className="flex items-center justify-between mb-4">
@@ -41,16 +67,20 @@ export default function GroceryPage() {
         </div>
       </header>
 
-      {allStores.length > 0 && (
-        <div className="mb-3 flex items-center gap-2">
-          <Filter className="w-4 h-4 text-subtle" />
+      <div className="grid grid-cols-2 gap-2 mb-3">
+        <Select value={sortBy} onChange={e => setSortBy(e.target.value)} className="text-sm">
+          <option value="added">Sort: Added</option>
+          <option value="name">Sort: Name</option>
+          <option value="department">Sort: Department</option>
+        </Select>
+        {allStores.length > 0 ? (
           <Select value={storeFilter} onChange={e => setStoreFilter(e.target.value)} className="text-sm">
             <option value="all">All stores</option>
             <option value="none">No store set</option>
             {allStores.map(s => <option key={s} value={s}>{s}</option>)}
           </Select>
-        </div>
-      )}
+        ) : <div />}
+      </div>
 
       {filteredActive.length === 0 && bought.length === 0 ? (
         <EmptyState
@@ -61,24 +91,40 @@ export default function GroceryPage() {
         />
       ) : (
         <>
-          <ul className={`space-y-2 mb-6`}>
-            {filteredActive.map(g => {
-              const linkedItem = items.find(i => i.id === g.itemId)
-              const statusColor = linkedItem
-                ? statusForGrocery(linkedItem, grocery, reservations[linkedItem.id] || 0)
-                : null
-              return (
-                <GroceryRow
-                  key={g.id}
-                  g={g}
-                  checkoutMode={checkoutMode}
-                  statusColor={statusColor}
-                  onToggle={() => setGroceryBought(g.id, true)}
-                  onDelete={() => deleteGrocery(g.id)}
-                />
-              )
-            })}
-          </ul>
+          {sortBy === 'department' ? (
+            <div className="mb-6">
+              <GroceryGrouped
+                entries={sortedActive}
+                groupBy={groceryDept}
+                groupLabel={id => id ? (departmentLookup[id] || id) : 'No department'}
+                items={items}
+                grocery={grocery}
+                reservations={reservations}
+                checkoutMode={checkoutMode}
+                onToggle={setGroceryBought}
+                onDelete={deleteGrocery}
+              />
+            </div>
+          ) : (
+            <ul className={`space-y-2 mb-6`}>
+              {sortedActive.map(g => {
+                const linkedItem = items.find(i => i.id === g.itemId)
+                const statusColor = linkedItem
+                  ? statusForGrocery(linkedItem, grocery, reservations[linkedItem.id] || 0)
+                  : null
+                return (
+                  <GroceryRow
+                    key={g.id}
+                    g={g}
+                    checkoutMode={checkoutMode}
+                    statusColor={statusColor}
+                    onToggle={() => setGroceryBought(g.id, true)}
+                    onDelete={() => deleteGrocery(g.id)}
+                  />
+                )
+              })}
+            </ul>
+          )}
           {bought.length > 0 && (
             <div>
               <h3 className="text-xs font-semibold uppercase tracking-wide text-muted mb-2">Bought ({bought.length})</h3>
@@ -147,6 +193,54 @@ function GroceryRow({ g, checkoutMode, statusColor, onToggle, onDelete }) {
         )}
       </Card>
     </li>
+  )
+}
+
+/**
+ * Grocery list grouped by department. Renders section headers and preserves
+ * the pre-sorted order within each group.
+ */
+function GroceryGrouped({ entries, groupBy, groupLabel, items, grocery, reservations, checkoutMode, onToggle, onDelete }) {
+  const groups = []
+  let currentKey = Symbol('unset')
+  let currentList = null
+  for (const g of entries) {
+    const key = groupBy(g)
+    if (key !== currentKey) {
+      currentList = { key, label: groupLabel(key), items: [] }
+      groups.push(currentList)
+      currentKey = key
+    }
+    currentList.items.push(g)
+  }
+  return (
+    <div className="space-y-4">
+      {groups.map((group, gi) => (
+        <div key={gi}>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted mb-2 px-1">
+            {group.label}
+          </h3>
+          <ul className="space-y-2">
+            {group.items.map(g => {
+              const linkedItem = items.find(i => i.id === g.itemId)
+              const statusColor = linkedItem
+                ? statusForGrocery(linkedItem, grocery, reservations[linkedItem.id] || 0)
+                : null
+              return (
+                <GroceryRow
+                  key={g.id}
+                  g={g}
+                  checkoutMode={checkoutMode}
+                  statusColor={statusColor}
+                  onToggle={() => onToggle(g.id, true)}
+                  onDelete={() => onDelete(g.id)}
+                />
+              )
+            })}
+          </ul>
+        </div>
+      ))}
+    </div>
   )
 }
 
