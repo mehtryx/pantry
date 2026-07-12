@@ -4,6 +4,21 @@
 
 :root {
   color-scheme: light dark;
+
+  /* Default (sage light) — overwritten at runtime by ThemeContext */
+  --bg: 250 247 242;
+  --surface: 255 255 255;
+  --surface2: 243 237 226;
+  --border: 232 220 199;
+  --text: 45 60 42;
+  --text-muted: 95 122 88;
+  --text-subtle: 147 173 134;
+  --primary: 122 148 113;
+  --primary-hover: 95 122 88;
+  --primary-fg: 255 255 255;
+  --danger: 184 94 64;
+  --danger-fg: 255 255 255;
+  --warn: 196 138 46;
 }
 
 html, body, #root {
@@ -13,34 +28,37 @@ html, body, #root {
 }
 
 body {
-  background: #faf7f2;
-  color: #2d3c2a;
+  background: rgb(var(--bg));
+  color: rgb(var(--text));
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior-y: none;
-}
-
-.dark body {
-  background: #1f2a1d;
-  color: #dde5d8;
+  transition: background-color 0.2s, color 0.2s;
 }
 
 /* iOS safe area */
 .safe-top { padding-top: env(safe-area-inset-top); }
 .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
 
-/* Prevent double-tap zoom on buttons */
 button { touch-action: manipulation; }
 
-/* Slightly nicer focus rings */
 button:focus-visible, input:focus-visible, select:focus-visible {
-  outline: 2px solid #7a9471;
+  outline: 2px solid rgb(var(--primary));
   outline-offset: 2px;
 }
 
-/* Hide number input spinners */
 input[type=number]::-webkit-inner-spin-button,
 input[type=number]::-webkit-outer-spin-button {
   -webkit-appearance: none;
   margin: 0;
 }
 input[type=number] { -moz-appearance: textfield; }
+
+/* Status dots — letterboxed for contrast against any palette */
+.status-dot {
+  border: 1.5px solid rgb(255 255 255 / 0.9);
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.15);
+}
+.dark .status-dot {
+  border-color: rgb(0 0 0 / 0.6);
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.2);
+}

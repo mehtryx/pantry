@@ -39,11 +39,11 @@ export function computeItemStatus(item, groceryItems = [], reserved = 0) {
 }
 
 export const STATUS_COLORS = {
-  green: 'bg-sage-400',
-  yellow: 'bg-amber_warn-400',
-  'red-under': 'bg-terracotta-500',
-  'red-over': 'bg-terracotta-400',
-  neutral: 'bg-cream-300 dark:bg-sage-800',
+  green: 'bg-status-green status-dot',
+  yellow: 'bg-status-yellow status-dot',
+  'red-under': 'bg-status-redUnder status-dot',
+  'red-over': 'bg-status-redOver status-dot',
+  neutral: 'bg-subtle/30 status-dot',
 }
 
 export const STATUS_LABELS = {

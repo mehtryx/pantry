@@ -17,8 +17,8 @@ export default function PutAwayPage() {
   return (
     <div className="px-4 pt-4">
       <header className="mb-4">
-        <h1 className="text-2xl font-semibold text-sage-800 dark:text-cream-100">Put Away</h1>
-        <p className="text-sm text-sage-500 dark:text-cream-400 mt-1">
+        <h1 className="text-2xl font-semibold text-body">Put Away</h1>
+        <p className="text-sm text-muted mt-1">
           Items you've bought but haven't stored yet.
         </p>
       </header>
@@ -33,15 +33,15 @@ export default function PutAwayPage() {
         <ul className="space-y-2">
           {waitingItems.map(item => (
             <li key={item.id}>
-              <Card className="p-3 flex items-center gap-3 active:bg-cream-200 dark:active:bg-sage-800" onClick={() => setTarget({ item })}>
-                <div className="w-2.5 h-2.5 rounded-full bg-amber_warn-400 flex-shrink-0" />
+              <Card className="p-3 flex items-center gap-3 active:bg-surface2 dark:active:bg-surface2" onClick={() => setTarget({ item })}>
+                <div className="w-2.5 h-2.5 rounded-full bg-warn flex-shrink-0" />
                 <div className="flex-1">
-                  <div className="font-medium text-sage-800 dark:text-cream-100">{item.name}</div>
-                  <div className="text-xs text-sage-500 dark:text-cream-400">
+                  <div className="font-medium text-body">{item.name}</div>
+                  <div className="text-xs text-muted">
                     {formatQty(item.stock[WAITING], item.unit)} to store
                   </div>
                 </div>
-                <ArrowRight className="w-4 h-4 text-sage-400" />
+                <ArrowRight className="w-4 h-4 text-subtle" />
               </Card>
             </li>
           ))}
@@ -73,20 +73,20 @@ function PutAwayModal({ target, onClose, putAway }) {
   return (
     <Modal open={!!target} onClose={onClose} title={`Put Away: ${item.name}`}>
       <div className="space-y-3">
-        <div className="bg-cream-200 dark:bg-sage-800 rounded-xl p-3 text-sm">
+        <div className="bg-surface2 rounded-xl p-3 text-sm">
           <strong>{formatQty(available, item.unit)}</strong> waiting to be stored
         </div>
 
         <div>
-          <label className="text-sm text-sage-600 dark:text-cream-300 mb-1 block">Destination</label>
+          <label className="text-sm text-muted mb-1 block">Destination</label>
           <Select value={location} onChange={e => setLocation(e.target.value)}>
             {STORAGE_LOCATIONS.map(l => <option key={l.id} value={l.id}>{l.label}</option>)}
           </Select>
         </div>
 
         <div>
-          <label className="text-sm text-sage-600 dark:text-cream-300 mb-1 block">
-            Quantity <span className="text-sage-400">(leave blank for all)</span>
+          <label className="text-sm text-muted mb-1 block">
+            Quantity <span className="text-subtle">(leave blank for all)</span>
           </label>
           <input
             type="number"
@@ -94,7 +94,7 @@ function PutAwayModal({ target, onClose, putAway }) {
             value={qty}
             onChange={e => setQty(e.target.value)}
             placeholder={`All (${formatQty(available, item.unit)})`}
-            className="w-full px-3 py-2.5 min-h-[44px] rounded-xl border border-cream-300 bg-cream-50 dark:bg-sage-800 dark:border-sage-700 dark:text-cream-100"
+            className="w-full px-3 py-2.5 min-h-[44px] rounded-xl border border-border bg-surface dark:border-border dark:text-body"
           />
         </div>
 

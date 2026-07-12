@@ -11,7 +11,7 @@ const tabs = [
 
 export default function BottomNav() {
   return (
-    <nav className="fixed bottom-0 inset-x-0 bg-cream-100/95 dark:bg-sage-900/95 backdrop-blur border-t border-cream-200 dark:border-sage-700 safe-bottom z-30">
+    <nav className="fixed bottom-0 inset-x-0 bg-bg/95 backdrop-blur border-t border-border safe-bottom z-30">
       <div className="max-w-2xl mx-auto grid grid-cols-5">
         {tabs.map(({ to, label, icon: Icon }) => (
           <NavLink
@@ -21,8 +21,8 @@ export default function BottomNav() {
             className={({ isActive }) =>
               `flex flex-col items-center justify-center py-2 gap-0.5 text-xs transition-colors min-h-[56px] ${
                 isActive
-                  ? 'text-sage-500 dark:text-sage-200'
-                  : 'text-sage-400 dark:text-sage-500'
+                  ? 'text-muted dark:text-body'
+                  : 'text-subtle dark:text-muted'
               }`
             }
           >

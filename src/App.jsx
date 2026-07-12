@@ -16,7 +16,7 @@ function Shell() {
   // While auth is initializing
   if (!user) {
     return (
-      <div className="min-h-screen flex items-center justify-center text-sage-500">
+      <div className="min-h-screen flex items-center justify-center text-muted">
         Connecting…
       </div>
     )
@@ -30,14 +30,14 @@ function Shell() {
   // Signed in with Google but household not resolved yet
   if (!householdId) {
     return (
-      <div className="min-h-screen flex items-center justify-center text-sage-500">
+      <div className="min-h-screen flex items-center justify-center text-muted">
         Setting up…
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-cream-100 dark:bg-sage-900 pb-20">
+    <div className="min-h-screen bg-bg pb-20">
       <div className="max-w-2xl mx-auto safe-top">
         {ready ? (
           <Routes>
@@ -49,7 +49,7 @@ function Shell() {
             <Route path="/settings" element={<SettingsPage />} />
           </Routes>
         ) : (
-          <div className="p-8 text-center text-sage-500">Loading…</div>
+          <div className="p-8 text-center text-muted">Loading…</div>
         )}
       </div>
       <BottomNav />

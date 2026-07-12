@@ -44,14 +44,14 @@ export default function PantryPage() {
   return (
     <div className="px-4 pt-4">
       <header className="flex items-center justify-between mb-4">
-        <h1 className="text-2xl font-semibold text-sage-800 dark:text-cream-100">Pantry</h1>
+        <h1 className="text-2xl font-semibold text-body">Pantry</h1>
         <Button onClick={() => setShowAdd(true)} size="sm">
           <Plus className="w-4 h-4" /> Add
         </Button>
       </header>
 
       <div className="relative mb-3">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-sage-400" />
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-subtle" />
         <Input
           value={search}
           onChange={e => setSearch(e.target.value)}
@@ -87,17 +87,17 @@ export default function PantryPage() {
             const st = computeItemStatus(item, grocery, reservations[item.id] || 0)
             return (
               <li key={item.id}>
-                <Card className="p-3 flex items-center gap-3 active:bg-cream-200 dark:active:bg-sage-800" onClick={() => setDetailItem(item)}>
+                <Card className="p-3 flex items-center gap-3 active:bg-surface2 dark:active:bg-surface2" onClick={() => setDetailItem(item)}>
                   <div className={`w-3 h-3 rounded-full flex-shrink-0 ${STATUS_COLORS[st.status]}`} title={STATUS_LABELS[st.status]} />
                   <div className="flex-1 min-w-0">
-                    <div className="font-medium text-sage-800 dark:text-cream-100 truncate">{item.name}</div>
-                    <div className="text-xs text-sage-500 dark:text-cream-400 truncate">
+                    <div className="font-medium text-body truncate">{item.name}</div>
+                    <div className="text-xs text-muted truncate">
                       {stockSummary(item)}
                     </div>
                   </div>
-                  <div className="text-right text-xs text-sage-500 dark:text-cream-400">
+                  <div className="text-right text-xs text-muted">
                     {st.reserved > 0 && <div>Reserved: {formatQty(st.reserved, item.unit)}</div>}
-                    {st.status === 'red-over' && <div className="text-terracotta-500">On list, have plenty</div>}
+                    {st.status === 'red-over' && <div className="text-danger">On list, have plenty</div>}
                   </div>
                 </Card>
               </li>
@@ -149,23 +149,23 @@ function AddItemModal({ open, onClose, onAdd }) {
     <Modal open={open} onClose={onClose} title="Add Item">
       <div className="space-y-3">
         <div>
-          <label className="text-sm text-sage-600 dark:text-cream-300 mb-1 block">Name</label>
+          <label className="text-sm text-muted mb-1 block">Name</label>
           <Input autoFocus value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Chicken breast" />
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-sm text-sage-600 dark:text-cream-300 mb-1 block">Quantity</label>
+            <label className="text-sm text-muted mb-1 block">Quantity</label>
             <Input type="number" inputMode="decimal" value={qty} onChange={e => setQty(e.target.value)} />
           </div>
           <div>
-            <label className="text-sm text-sage-600 dark:text-cream-300 mb-1 block">Unit</label>
+            <label className="text-sm text-muted mb-1 block">Unit</label>
             <Select value={unit} onChange={e => setUnit(e.target.value)}>
               {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
             </Select>
           </div>
         </div>
         <div>
-          <label className="text-sm text-sage-600 dark:text-cream-300 mb-1 block">Location</label>
+          <label className="text-sm text-muted mb-1 block">Location</label>
           <Select value={location} onChange={e => setLocation(e.target.value)}>
             {STORAGE_LOCATIONS.map(l => <option key={l.id} value={l.id}>{l.label}</option>)}
           </Select>
@@ -207,21 +207,21 @@ function ItemDetailModal({ item, onClose, setItemLocationQty, updateItem, delete
               <Input autoFocus value={nameDraft} onChange={e => setNameDraft(e.target.value)} onBlur={saveName} onKeyDown={e => e.key === 'Enter' && saveName()} />
             </div>
           ) : (
-            <button className="text-lg font-medium text-sage-800 dark:text-cream-100" onClick={() => { setNameDraft(item.name); setEditingName(true) }}>
-              {item.name} <span className="text-sm text-sage-400">(tap to edit)</span>
+            <button className="text-lg font-medium text-body" onClick={() => { setNameDraft(item.name); setEditingName(true) }}>
+              {item.name} <span className="text-sm text-subtle">(tap to edit)</span>
             </button>
           )}
-          <div className="text-sm text-sage-500 dark:text-cream-400">Unit: {item.unit}</div>
+          <div className="text-sm text-muted">Unit: {item.unit}</div>
         </div>
 
         {waitingQty > 0 && (
-          <div className="bg-amber_warn-400/10 border border-amber_warn-400/30 rounded-xl p-3 text-sm">
+          <div className="bg-warn/10 border border-warn/30 rounded-xl p-3 text-sm">
             <strong>{formatQty(waitingQty, item.unit)}</strong> waiting to be stored. Head to the Put Away tab to assign a location.
           </div>
         )}
 
         <div>
-          <h4 className="text-sm font-medium text-sage-600 dark:text-cream-300 mb-2">Stock by Location</h4>
+          <h4 className="text-sm font-medium text-muted mb-2">Stock by Location</h4>
           <ul className="space-y-2">
             {stockEntries.map(({ location, label, qty }) => (
               <QtyRow key={location} label={label} qty={qty} unit={item.unit}
@@ -230,7 +230,7 @@ function ItemDetailModal({ item, onClose, setItemLocationQty, updateItem, delete
           </ul>
         </div>
 
-        <div className="pt-2 border-t border-cream-200 dark:border-sage-700">
+        <div className="pt-2 border-t border-border">
           <Button variant="danger" onClick={() => { if (confirm('Delete this item?')) deleteItem(item.id) }} className="w-full">
             <Trash2 className="w-4 h-4" /> Delete Item
           </Button>
@@ -244,7 +244,7 @@ function QtyRow({ label, qty, unit, onChange }) {
   const [val, setVal] = useState(String(qty))
   return (
     <li className="flex items-center gap-2">
-      <div className="flex-1 text-sm text-sage-700 dark:text-cream-200">{label}</div>
+      <div className="flex-1 text-sm text-body">{label}</div>
       <Button variant="ghost" size="sm" onClick={() => { const n = Math.max(0, (Number(val) || 0) - 1); setVal(String(n)); onChange(n) }}>
         <Minus className="w-3 h-3" />
       </Button>
@@ -254,9 +254,9 @@ function QtyRow({ label, qty, unit, onChange }) {
         value={val}
         onChange={e => setVal(e.target.value)}
         onBlur={() => onChange(Number(val) || 0)}
-        className="w-16 px-2 py-1.5 rounded-lg border border-cream-300 dark:border-sage-700 bg-cream-50 dark:bg-sage-800 text-center text-sm"
+        className="w-16 px-2 py-1.5 rounded-lg border border-border bg-surface text-center text-sm"
       />
-      <span className="text-xs text-sage-500 w-8">{unit}</span>
+      <span className="text-xs text-muted w-8">{unit}</span>
       <Button variant="ghost" size="sm" onClick={() => { const n = (Number(val) || 0) + 1; setVal(String(n)); onChange(n) }}>
         <Plus className="w-3 h-3" />
       </Button>

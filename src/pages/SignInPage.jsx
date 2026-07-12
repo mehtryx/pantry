@@ -32,18 +32,18 @@ export default function SignInPage() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center px-6 bg-cream-100 dark:bg-sage-900">
+    <div className="min-h-screen flex flex-col items-center justify-center px-6 bg-bg">
       <div className="max-w-sm w-full text-center safe-top safe-bottom">
-        <div className="mx-auto w-20 h-20 rounded-3xl bg-sage-400 shadow-lg flex items-center justify-center mb-6">
+        <div className="mx-auto w-20 h-20 rounded-3xl bg-primary shadow-lg flex items-center justify-center mb-6">
           <PantryLogo />
         </div>
-        <h1 className="text-3xl font-semibold text-sage-800 dark:text-cream-100 mb-2">Pantry</h1>
-        <p className="text-sage-500 dark:text-cream-300 mb-10 leading-relaxed">
+        <h1 className="text-3xl font-semibold text-body mb-2">Pantry</h1>
+        <p className="text-muted mb-10 leading-relaxed">
           Track what's in your kitchen, plan meals, never buy duplicates.
         </p>
 
         {error && (
-          <div className="mb-4 text-sm text-terracotta-500 bg-terracotta-500/10 border border-terracotta-500/30 rounded-xl p-3">
+          <div className="mb-4 text-sm text-danger bg-danger/10 border border-danger/30 rounded-xl p-3">
             {error}
           </div>
         )}
@@ -52,7 +52,7 @@ export default function SignInPage() {
           <GoogleIcon /> {signingIn ? 'Signing in…' : 'Sign in with Google'}
         </Button>
 
-        <p className="mt-6 text-xs text-sage-400 dark:text-cream-400">
+        <p className="mt-6 text-xs text-subtle">
           Access is restricted to authorized accounts.
         </p>
       </div>
