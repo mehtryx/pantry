@@ -1,9 +1,9 @@
 import { initializeApp } from 'firebase/app'
-import { getFirestore, enableIndexedDbPersistence } from 'firebase/firestore'
+import { getFirestore, enableIndexedDbPersistence, doc, getDoc, setDoc, updateDoc, arrayUnion, serverTimestamp } from 'firebase/firestore'
 import {
-  getAuth, signInAnonymously, onAuthStateChanged,
-  sendSignInLinkToEmail, isSignInWithEmailLink, signInWithEmailLink,
-  EmailAuthProvider, linkWithCredential, signOut
+  getAuth, signInAnonymously, onAuthStateChanged, signOut,
+  GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult,
+  linkWithPopup, linkWithRedirect,
 } from 'firebase/auth'
 
 const firebaseConfig = {
@@ -14,6 +14,8 @@ const firebaseConfig = {
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
 }
+
+const ALLOWED_DOMAIN = import.meta.env.VITE_ALLOWED_EMAIL_DOMAIN || null
 
 const app = initializeApp(firebaseConfig)
 export const db = getFirestore(app)
@@ -27,105 +29,137 @@ try {
   console.warn('Firestore persistence not available')
 }
 
-const PENDING_EMAIL_KEY = 'pantry_pending_email'
+function emailAllowed(email) {
+  if (!ALLOWED_DOMAIN) return true
+  if (!email) return false
+  return email.toLowerCase().endsWith('@' + ALLOWED_DOMAIN.toLowerCase())
+}
+
+/** Derive household ID from the user's email domain. */
+export function householdIdForEmail(email) {
+  if (!email) return null
+  const domain = email.split('@')[1]
+  if (!domain) return null
+  return domain.toLowerCase()
+}
+
+export class DomainRestrictedError extends Error {
+  constructor() {
+    super('This app is restricted. Please sign in with an authorized account.')
+    this.code = 'app/domain-restricted'
+  }
+}
+
+/**
+ * Ensure the household document exists and the current user is listed as a
+ * member. Called after any real (non-anonymous) sign-in.
+ */
+export async function ensureHouseholdMembership(user) {
+  const hid = householdIdForEmail(user.email)
+  if (!hid) throw new Error('User has no email')
+  const ref = doc(db, 'households', hid)
+  const snap = await getDoc(ref)
+  if (!snap.exists()) {
+    await setDoc(ref, {
+      domain: user.email.split('@')[1].toLowerCase(),
+      members: [user.uid],
+      memberEmails: [user.email.toLowerCase()],
+      createdAt: serverTimestamp(),
+    })
+  } else {
+    const data = snap.data()
+    if (!(data.members || []).includes(user.uid)) {
+      await updateDoc(ref, {
+        members: arrayUnion(user.uid),
+        memberEmails: arrayUnion(user.email.toLowerCase()),
+      })
+    }
+  }
+  return hid
+}
 
 export function initAuth() {
   return new Promise((resolve, reject) => {
-    if (isSignInWithEmailLink(auth, window.location.href)) {
-      completeEmailLinkSignIn()
-        .then(() => waitForUser().then(resolve))
-        .catch(reject)
-      return
-    }
-
-    const unsub = onAuthStateChanged(auth, (user) => {
-      if (user) {
-        unsub()
-        resolve(user)
-      } else {
-        signInAnonymously(auth).catch((err) => {
-          unsub()
-          reject(err)
+    getRedirectResult(auth)
+      .then(async (result) => {
+        if (result && result.user && !result.user.isAnonymous) {
+          if (!emailAllowed(result.user.email)) {
+            await signOut(auth)
+            reject(new DomainRestrictedError())
+            return
+          }
+        }
+      })
+      .catch((err) => {
+        console.warn('Redirect result error:', err)
+      })
+      .finally(() => {
+        const unsub = onAuthStateChanged(auth, async (user) => {
+          if (user) {
+            if (!user.isAnonymous && !emailAllowed(user.email)) {
+              await signOut(auth)
+              signInAnonymously(auth).catch(() => {})
+              return
+            }
+            unsub()
+            resolve(user)
+          } else {
+            signInAnonymously(auth).catch((err) => {
+              unsub()
+              reject(err)
+            })
+          }
         })
-      }
-    })
+      })
   })
 }
 
-function waitForUser() {
-  return new Promise((resolve) => {
-    const unsub = onAuthStateChanged(auth, (user) => {
-      if (user) { unsub(); resolve(user) }
-    })
-  })
-}
-
-async function completeEmailLinkSignIn() {
-  let email = localStorage.getItem(PENDING_EMAIL_KEY)
-  if (!email) {
-    email = window.prompt('Please confirm your email to finish signing in:')
-    if (!email) throw new Error('Email confirmation cancelled')
-  }
+export async function signInWithGoogle() {
+  const provider = new GoogleAuthProvider()
+  provider.setCustomParameters({ prompt: 'select_account' })
 
   const currentUser = auth.currentUser
-  try {
-    if (currentUser && currentUser.isAnonymous) {
-      const credential = EmailAuthProvider.credentialWithLink(email, window.location.href)
-      await linkWithCredential(currentUser, credential)
-    } else {
-      await signInWithEmailLink(auth, email, window.location.href)
-    }
-  } catch (err) {
-    if (err.code === 'auth/credential-already-in-use' || err.code === 'auth/email-already-in-use') {
-      await signInWithEmailLink(auth, email, window.location.href)
-    } else {
-      throw err
-    }
-  } finally {
-    localStorage.removeItem(PENDING_EMAIL_KEY)
-    if (window.history.replaceState) {
-      const url = new URL(window.location.href)
-      url.search = ''
-      window.history.replaceState({}, '', url.pathname)
-    }
-  }
-}
+  const shouldLink = currentUser && currentUser.isAnonymous
 
-export async function sendMagicLink(email) {
-  const actionCodeSettings = {
-    url: window.location.origin + '/',
-    handleCodeInApp: true,
+  try {
+    let result
+    if (shouldLink) {
+      result = await linkWithPopup(currentUser, provider)
+    } else {
+      result = await signInWithPopup(auth, provider)
+    }
+    if (!emailAllowed(result.user.email)) {
+      await signOut(auth)
+      await signInAnonymously(auth)
+      throw new DomainRestrictedError()
+    }
+    return result.user
+  } catch (err) {
+    if (
+      err.code === 'auth/popup-blocked' ||
+      err.code === 'auth/popup-closed-by-user' ||
+      err.code === 'auth/operation-not-supported-in-this-environment' ||
+      err.code === 'auth/cancelled-popup-request'
+    ) {
+      // fallthrough
+    } else if (err.code === 'auth/credential-already-in-use') {
+      await signInWithRedirect(auth, provider)
+      return
+    } else if (err instanceof DomainRestrictedError) {
+      throw err
+    } else {
+      console.warn('Popup sign-in failed, falling back to redirect:', err)
+    }
+
+    if (shouldLink) {
+      await linkWithRedirect(currentUser, provider)
+    } else {
+      await signInWithRedirect(auth, provider)
+    }
   }
-  await sendSignInLinkToEmail(auth, email, actionCodeSettings)
-  localStorage.setItem(PENDING_EMAIL_KEY, email)
 }
 
 export async function signOutUser() {
   await signOut(auth)
   window.location.reload()
-}
-
-/**
- * Complete sign-in from a pasted URL (works around iOS PWA link-routing).
- * Pass the full sign-in URL from clipboard; we validate it, link or sign in,
- * and return the resulting user.
- */
-export async function completeSignInFromUrl(url, email) {
-  if (!isSignInWithEmailLink(auth, url)) {
-    throw new Error('That does not look like a valid sign-in link. Make sure you copied the whole link from the email.')
-  }
-  const currentUser = auth.currentUser
-  try {
-    if (currentUser && currentUser.isAnonymous) {
-      const credential = EmailAuthProvider.credentialWithLink(email, url)
-      return await linkWithCredential(currentUser, credential)
-    } else {
-      return await signInWithEmailLink(auth, email, url)
-    }
-  } catch (err) {
-    if (err.code === 'auth/credential-already-in-use' || err.code === 'auth/email-already-in-use') {
-      return await signInWithEmailLink(auth, email, url)
-    }
-    throw err
-  }
 }

@@ -3,7 +3,7 @@ import {
   collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot,
   query, where, serverTimestamp, writeBatch, getDocs
 } from 'firebase/firestore'
-import { db, auth, initAuth } from '../lib/firebase'
+import { db, auth, initAuth, ensureHouseholdMembership, householdIdForEmail } from '../lib/firebase'
 import { onAuthStateChanged } from 'firebase/auth'
 import { WAITING, DRAIN_ORDER } from '../lib/constants'
 
@@ -12,59 +12,89 @@ export const useData = () => useContext(DataContext)
 
 export function DataProvider({ children }) {
   const [user, setUser] = useState(null)
+  const [authError, setAuthError] = useState(null)
+  const [householdId, setHouseholdId] = useState(null)
+  const [migrationStatus, setMigrationStatus] = useState('idle') // idle|running|done|error
   const [ready, setReady] = useState(false)
   const [items, setItems] = useState([])
   const [grocery, setGrocery] = useState([])
   const [recipes, setRecipes] = useState([])
   const [mealPlans, setMealPlans] = useState([])
 
-  // Sign in on mount, then keep user in sync with auth state
   useEffect(() => {
-    initAuth().catch(err => console.error('Auth failed:', err))
+    initAuth().catch(err => {
+      console.error('Auth failed:', err)
+      setAuthError(err)
+    })
     const unsub = onAuthStateChanged(auth, (u) => {
       if (u) setUser(u)
     })
     return unsub
   }, [])
 
-  // Subscribe to collections once signed in
+  // Whenever user changes: derive household ID, ensure membership, migrate legacy docs
   useEffect(() => {
     if (!user) return
-    const uid = user.uid
-
-    const unsubItems = onSnapshot(
-      query(collection(db, 'items'), where('uid', '==', uid)),
-      snap => setItems(snap.docs.map(d => ({ id: d.id, ...d.data() })))
-    )
-    const unsubGrocery = onSnapshot(
-      query(collection(db, 'grocery'), where('uid', '==', uid)),
-      snap => setGrocery(snap.docs.map(d => ({ id: d.id, ...d.data() })))
-    )
-    const unsubRecipes = onSnapshot(
-      query(collection(db, 'recipes'), where('uid', '==', uid)),
-      snap => setRecipes(snap.docs.map(d => ({ id: d.id, ...d.data() })))
-    )
-    const unsubPlans = onSnapshot(
-      query(collection(db, 'mealPlans'), where('uid', '==', uid)),
-      snap => {
-        setMealPlans(snap.docs.map(d => ({ id: d.id, ...d.data() })))
-        setReady(true)
-      }
-    )
-
-    return () => {
-      unsubItems(); unsubGrocery(); unsubRecipes(); unsubPlans()
+    if (user.isAnonymous) {
+      // Anonymous placeholder — no household yet
+      setHouseholdId(null)
+      return
     }
+    const hid = householdIdForEmail(user.email)
+
+    let cancelled = false
+    ;(async () => {
+      try {
+        setMigrationStatus('running')
+        await ensureHouseholdMembership(user)
+        await migrateLegacyDocs(user.uid, hid)
+        if (cancelled) return
+        setMigrationStatus('done')
+        // Only now switch queries to household-scoped
+        setHouseholdId(hid)
+      } catch (err) {
+        console.error('Household setup / migration failed:', err)
+        if (!cancelled) setMigrationStatus('error')
+      }
+    })()
+
+    return () => { cancelled = true }
   }, [user])
+
+  // Subscribe to collections scoped by household (or by uid while anonymous)
+  useEffect(() => {
+    if (!user) return
+
+    // Anonymous session: still use uid-based queries so the app functions
+    // before she signs in.
+    const scoped = householdId
+      ? [where('householdId', '==', householdId)]
+      : [where('uid', '==', user.uid)]
+
+    const unsubs = [
+      onSnapshot(query(collection(db, 'items'), ...scoped),
+        snap => setItems(snap.docs.map(d => ({ id: d.id, ...d.data() })))),
+      onSnapshot(query(collection(db, 'grocery'), ...scoped),
+        snap => setGrocery(snap.docs.map(d => ({ id: d.id, ...d.data() })))),
+      onSnapshot(query(collection(db, 'recipes'), ...scoped),
+        snap => setRecipes(snap.docs.map(d => ({ id: d.id, ...d.data() })))),
+      onSnapshot(query(collection(db, 'mealPlans'), ...scoped),
+        snap => {
+          setMealPlans(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+          setReady(true)
+        }),
+    ]
+
+    return () => unsubs.forEach(u => u())
+  }, [user, householdId])
 
   // Auto-cook meals whose date has passed
   useEffect(() => {
     if (!ready || !user) return
-    autoCookPastMeals(user.uid, mealPlans, items, recipes)
+    autoCookPastMeals(householdId, user.uid, mealPlans, items, recipes)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, mealPlans.length, items.length, recipes.length])
 
-  // Compute reservations per item (across all uncooked future plans)
   const reservations = useMemo(() => {
     const map = {}
     const today = todayISO()
@@ -81,13 +111,16 @@ export function DataProvider({ children }) {
     return map
   }, [mealPlans, recipes])
 
-  // ---------- Mutations ----------
-  const uid = user?.uid
+  // Every write gets tagged with the current scope (householdId or uid)
+  const scopeFields = () => householdId
+    ? { householdId }
+    : { uid: user?.uid }
 
   async function addItem({ name, unit, location, quantity }) {
     const stock = { [location]: Number(quantity) || 0 }
     const ref = await addDoc(collection(db, 'items'), {
-      uid, name: name.trim(), unit, stock, stores: [],
+      ...scopeFields(),
+      name: name.trim(), unit, stock, stores: [],
       createdAt: serverTimestamp(), updatedAt: serverTimestamp()
     })
     return ref.id
@@ -111,10 +144,9 @@ export function DataProvider({ children }) {
     await deleteDoc(doc(db, 'items', id))
   }
 
-  // ---------- Grocery ----------
   async function addGrocery({ itemId, name, unit, quantity, store }) {
     await addDoc(collection(db, 'grocery'), {
-      uid,
+      ...scopeFields(),
       itemId: itemId || null,
       name: name.trim(),
       unit,
@@ -134,13 +166,6 @@ export function DataProvider({ children }) {
     await deleteDoc(doc(db, 'grocery', id))
   }
 
-  /**
-   * Toggle bought state. When set to bought:
-   *   - If itemId exists: add quantity to item.stock.waiting_to_be_stored
-   *   - If no itemId: create the item first with quantity in waiting, then link
-   * When unset:
-   *   - Subtract from waiting_to_be_stored
-   */
   async function setGroceryBought(id, bought) {
     const g = grocery.find(x => x.id === id)
     if (!g) return
@@ -151,10 +176,9 @@ export function DataProvider({ children }) {
     if (bought) {
       let itemId = g.itemId
       if (!itemId) {
-        // Create new item
         const newRef = doc(collection(db, 'items'))
         batch.set(newRef, {
-          uid,
+          ...scopeFields(),
           name: g.name,
           unit: g.unit,
           stock: { [WAITING]: g.quantity || 0 },
@@ -172,7 +196,6 @@ export function DataProvider({ children }) {
         batch.update(doc(db, 'grocery', id), { bought: true })
       }
     } else {
-      // Un-bought: pull the quantity back out of waiting
       if (g.itemId) {
         const item = items.find(i => i.id === g.itemId)
         const current = item?.stock?.[WAITING] || 0
@@ -188,10 +211,6 @@ export function DataProvider({ children }) {
     await batch.commit()
   }
 
-  /**
-   * Move quantity from waiting_to_be_stored to a real location.
-   * If storing partial amount, remainder stays in waiting.
-   */
   async function putAway(itemId, targetLocation, quantity) {
     const item = items.find(i => i.id === itemId)
     if (!item) return
@@ -206,10 +225,9 @@ export function DataProvider({ children }) {
     await updateItem(itemId, { stock })
   }
 
-  // ---------- Recipes ----------
   async function addRecipe({ name, ingredients }) {
     const ref = await addDoc(collection(db, 'recipes'), {
-      uid, name: name.trim(), ingredients, createdAt: serverTimestamp()
+      ...scopeFields(), name: name.trim(), ingredients, createdAt: serverTimestamp()
     })
     return ref.id
   }
@@ -220,23 +238,23 @@ export function DataProvider({ children }) {
     await deleteDoc(doc(db, 'recipes', id))
   }
 
-  // ---------- Meal Plans ----------
   async function addMealPlan({ date, slot, recipeId }) {
     const ref = await addDoc(collection(db, 'mealPlans'), {
-      uid, date, slot, recipeId, cooked: false, createdAt: serverTimestamp()
+      ...scopeFields(), date, slot, recipeId, cooked: false, createdAt: serverTimestamp()
     })
-    await reconcileGroceryList(uid, [...mealPlans, { id: ref.id, date, slot, recipeId, cooked: false }], items, recipes, grocery)
+    await reconcileGroceryList(scopeFields(), [...mealPlans, { id: ref.id, date, slot, recipeId, cooked: false }], items, recipes, grocery)
     return ref.id
   }
 
   async function deleteMealPlan(id) {
     await deleteDoc(doc(db, 'mealPlans', id))
     const remaining = mealPlans.filter(p => p.id !== id)
-    await reconcileGroceryList(uid, remaining, items, recipes, grocery)
+    await reconcileGroceryList(scopeFields(), remaining, items, recipes, grocery)
   }
 
   const value = {
-    user, ready,
+    user, ready, authError, clearAuthError: () => setAuthError(null),
+    householdId, migrationStatus,
     items, grocery, recipes, mealPlans, reservations,
     addItem, updateItem, setItemLocationQty, deleteItem,
     addGrocery, updateGrocery, deleteGrocery, setGroceryBought, putAway,
@@ -247,20 +265,48 @@ export function DataProvider({ children }) {
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>
 }
 
-// ---------- Helpers ----------
 export function todayISO() {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 }
 
-async function autoCookPastMeals(uid, mealPlans, items, recipes) {
+/**
+ * One-time migration: find any docs still keyed by this user's uid (legacy
+ * pre-household schema) and stamp them with the householdId. Safe to run
+ * multiple times — if there are no legacy docs, it's a no-op.
+ */
+async function migrateLegacyDocs(uid, hid) {
+  const collections = ['items', 'grocery', 'recipes', 'mealPlans']
+  for (const col of collections) {
+    const q = query(collection(db, col), where('uid', '==', uid))
+    const snap = await getDocs(q)
+    if (snap.empty) continue
+    console.log(`Migrating ${snap.size} legacy ${col} docs to household ${hid}`)
+    // Batch in chunks of 400 to stay under Firestore's 500-write limit
+    const chunks = []
+    let cur = []
+    for (const d of snap.docs) {
+      cur.push(d)
+      if (cur.length >= 400) { chunks.push(cur); cur = [] }
+    }
+    if (cur.length) chunks.push(cur)
+    for (const chunk of chunks) {
+      const batch = writeBatch(db)
+      for (const d of chunk) {
+        batch.update(d.ref, { householdId: hid })
+      }
+      await batch.commit()
+    }
+  }
+}
+
+async function autoCookPastMeals(householdId, uid, mealPlans, items, recipes) {
   const today = todayISO()
   const toCook = mealPlans.filter(p => !p.cooked && p.date < today)
   if (toCook.length === 0) return
 
   const batch = writeBatch(db)
-  // Track stock changes across batch
-  const stockDeltas = {} // itemId -> { location: -amount }
+  const stockDeltas = {}
 
   for (const plan of toCook) {
     const recipe = recipes.find(r => r.id === plan.recipeId)
@@ -282,7 +328,6 @@ async function autoCookPastMeals(uid, mealPlans, items, recipes) {
         workingStock[loc] = have - take
         need -= take
       }
-      // Clean zeros
       for (const loc of Object.keys(workingStock)) {
         if (workingStock[loc] === 0) delete workingStock[loc]
       }
@@ -302,15 +347,9 @@ async function autoCookPastMeals(uid, mealPlans, items, recipes) {
   }
 }
 
-/**
- * Reconcile grocery list against meal plan needs.
- * For each ingredient across uncooked plans, sum needed quantity.
- * If (onHand + already-on-list-manual + already-on-list-auto) < needed, add auto entry.
- * If an existing 'meal:*' entry is no longer needed, remove it.
- */
-async function reconcileGroceryList(uid, mealPlans, items, recipes, grocery) {
+async function reconcileGroceryList(scope, mealPlans, items, recipes, grocery) {
   const today = todayISO()
-  const needs = {} // itemId -> total needed
+  const needs = {}
 
   for (const plan of mealPlans) {
     if (plan.cooked || plan.date < today) continue
@@ -347,7 +386,7 @@ async function reconcileGroceryList(uid, mealPlans, items, recipes, grocery) {
       } else {
         const ref = doc(collection(db, 'grocery'))
         batch.set(ref, {
-          uid, itemId, name: item.name, unit: item.unit,
+          ...scope, itemId, name: item.name, unit: item.unit,
           quantity: shortfall, store: null,
           addedBy: 'meal:auto', bought: false, createdAt: serverTimestamp(),
         })
@@ -359,7 +398,6 @@ async function reconcileGroceryList(uid, mealPlans, items, recipes, grocery) {
     }
   }
 
-  // Remove auto entries for items no longer needed at all
   for (const g of grocery) {
     if (g.bought || g.addedBy !== 'meal:auto') continue
     if (!needs[g.itemId]) {

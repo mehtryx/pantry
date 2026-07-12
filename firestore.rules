@@ -1,32 +1,79 @@
 rules_version = '2';
 
-// Lock every document to its owner (the anonymously-signed-in user).
-// Each collection stores a `uid` field on every document.
+// Household model:
+//  - Users with an email in the allowed domain share a household keyed by
+//    domain (e.g. "benedicthome_com").
+//  - All content docs (items, grocery, recipes, mealPlans) are keyed by
+//    `householdId`.
+//  - Anonymous users can still read/write their own uid-scoped docs so the
+//    app is usable before signing in with Google. This also supports the
+//    one-time migration where legacy docs still have `uid` set.
+
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // >>> CONFIGURE ME: allowed email domain (also update .env for client) <<<
+    function isDomainUser() {
+      return request.auth != null
+        && request.auth.token.email != null
+        && request.auth.token.email.matches('.*@benedicthome[.]com$');
+    }
+
+    function isAnon() {
+      return request.auth != null
+        && request.auth.token.firebase.sign_in_provider == 'anonymous';
+    }
+
+    function myHouseholdId() {
+      // household id = email domain (lowercase)
+      return isDomainUser()
+        ? request.auth.token.email.split('@')[1].lower()
+        : '';
+    }
+
+    // Household documents: readable by any allowed-domain user; a member can
+    // add themselves to the members list.
+    match /households/{hid} {
+      allow read, create, update: if isDomainUser();
+    }
+
+    // Content collections
+    function contentReadAllowed(rsrc) {
+      return (isDomainUser() && rsrc.data.householdId == myHouseholdId())
+          || (isAnon() && rsrc.data.uid == request.auth.uid)
+          || (isDomainUser() && rsrc.data.uid == request.auth.uid); // legacy pre-migration
+    }
+    function contentWriteAllowed(rsrc) {
+      return contentReadAllowed(rsrc);
+    }
+    function contentCreateAllowed() {
+      let d = request.resource.data;
+      return (isDomainUser() && d.householdId == myHouseholdId())
+          || (isAnon() && d.uid == request.auth.uid);
+    }
+
     match /items/{doc} {
-      allow read: if request.auth != null && resource.data.uid == request.auth.uid;
-      allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
-      allow update, delete: if request.auth != null && resource.data.uid == request.auth.uid;
+      allow read:   if contentReadAllowed(resource);
+      allow create: if contentCreateAllowed();
+      allow update, delete: if contentWriteAllowed(resource);
     }
 
     match /grocery/{doc} {
-      allow read: if request.auth != null && resource.data.uid == request.auth.uid;
-      allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
-      allow update, delete: if request.auth != null && resource.data.uid == request.auth.uid;
+      allow read:   if contentReadAllowed(resource);
+      allow create: if contentCreateAllowed();
+      allow update, delete: if contentWriteAllowed(resource);
     }
 
     match /recipes/{doc} {
-      allow read: if request.auth != null && resource.data.uid == request.auth.uid;
-      allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
-      allow update, delete: if request.auth != null && resource.data.uid == request.auth.uid;
+      allow read:   if contentReadAllowed(resource);
+      allow create: if contentCreateAllowed();
+      allow update, delete: if contentWriteAllowed(resource);
     }
 
     match /mealPlans/{doc} {
-      allow read: if request.auth != null && resource.data.uid == request.auth.uid;
-      allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
-      allow update, delete: if request.auth != null && resource.data.uid == request.auth.uid;
+      allow read:   if contentReadAllowed(resource);
+      allow create: if contentCreateAllowed();
+      allow update, delete: if contentWriteAllowed(resource);
     }
   }
 }

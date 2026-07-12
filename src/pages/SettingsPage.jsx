@@ -1,32 +1,42 @@
-import { useState } from 'react'
-import { Sun, Moon, Monitor, Download, Mail, LogOut, CheckCircle2, ClipboardPaste } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Sun, Moon, Monitor, Download, LogOut, CheckCircle2 } from 'lucide-react'
 import { useTheme } from '../contexts/ThemeContext'
 import { useData } from '../contexts/DataContext'
-import { sendMagicLink, signOutUser, completeSignInFromUrl } from '../lib/firebase'
-import { Button, Card, Input } from '../components/UI'
+import { signInWithGoogle, signOutUser, DomainRestrictedError } from '../lib/firebase'
+import { Button, Card } from '../components/UI'
 
 export default function SettingsPage() {
   const { theme, setTheme } = useTheme()
-  const { items, grocery, recipes, mealPlans, user } = useData()
-  const [email, setEmail] = useState('')
-  const [linkSent, setLinkSent] = useState(false)
-  const [sending, setSending] = useState(false)
-  const [error, setError] = useState('')
+  const { items, grocery, recipes, mealPlans, user, authError, clearAuthError, householdId, migrationStatus } = useData()
+  const [signInError, setSignInError] = useState('')
+  const [signingIn, setSigningIn] = useState(false)
+
+  // Surface auth errors from the initial redirect handling
+  useEffect(() => {
+    if (authError) {
+      setSignInError(authError.message || 'Sign-in failed.')
+      clearAuthError()
+    }
+  }, [authError, clearAuthError])
 
   const isAnonymous = user?.isAnonymous
   const userEmail = user?.email
 
-  async function handleSendLink() {
-    if (!email.trim()) return
-    setSending(true); setError('')
+  async function handleGoogleSignIn() {
+    setSigningIn(true); setSignInError('')
     try {
-      await sendMagicLink(email.trim())
-      setLinkSent(true)
+      await signInWithGoogle()
+      // If popup succeeded, we return here signed in.
+      // If redirect path was taken, the browser has already navigated away.
     } catch (err) {
-      console.error(err)
-      setError(err.message || 'Failed to send sign-in link')
+      if (err instanceof DomainRestrictedError) {
+        setSignInError(err.message)
+      } else {
+        console.error(err)
+        setSignInError(err.message || 'Sign-in failed. Please try again.')
+      }
     } finally {
-      setSending(false)
+      setSigningIn(false)
     }
   }
 
@@ -58,33 +68,33 @@ export default function SettingsPage() {
               Signed in as <strong>{userEmail}</strong>
             </div>
             <p className="text-xs text-sage-500 dark:text-cream-400 mb-3">
-              Your data is safe. Sign in with this email on any device to access it.
+              {householdId
+                ? 'You share this pantry with everyone in your household.'
+                : 'Setting up your household…'}
             </p>
+            {migrationStatus === 'running' && (
+              <div className="text-xs text-sage-500 mb-3">Migrating data…</div>
+            )}
+            {migrationStatus === 'error' && (
+              <div className="text-xs text-terracotta-500 mb-3">Migration hit an error — refresh to retry.</div>
+            )}
             <Button variant="secondary" onClick={signOutUser} className="w-full">
               <LogOut className="w-4 h-4" /> Sign Out
             </Button>
           </>
-        ) : linkSent ? (
-          <SignInLinkFlow email={email} onCancel={() => { setLinkSent(false); setEmail('') }} />
         ) : (
           <>
             <p className="text-xs text-sage-500 dark:text-cream-400 mb-3">
-              Right now your data is tied to this device only. Add your email to keep it safe — you'll be able to access it from any device and it won't be lost if Safari clears its storage. No password needed; we send you a sign-in link.
+              Right now your data is tied to this device only. Sign in with your Google account to keep it safe — you can access it from any device, and it won't be lost if Safari clears storage.
             </p>
-            <div className="space-y-2">
-              <Input
-                type="email"
-                inputMode="email"
-                autoComplete="email"
-                placeholder="you@example.com"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-              />
-              {error && <div className="text-xs text-terracotta-500">{error}</div>}
-              <Button onClick={handleSendLink} disabled={sending || !email.trim()} className="w-full">
-                <Mail className="w-4 h-4" /> {sending ? 'Sending…' : 'Send Sign-In Link'}
-              </Button>
-            </div>
+            {signInError && (
+              <div className="mb-3 text-xs text-terracotta-500 bg-terracotta-500/10 border border-terracotta-500/30 rounded-xl p-2">
+                {signInError}
+              </div>
+            )}
+            <Button onClick={handleGoogleSignIn} disabled={signingIn} className="w-full">
+              <GoogleIcon /> {signingIn ? 'Signing in…' : 'Sign in with Google'}
+            </Button>
           </>
         )}
       </Card>
@@ -114,91 +124,9 @@ export default function SettingsPage() {
       <Card className="p-4">
         <h3 className="text-sm font-medium text-sage-600 dark:text-cream-300 mb-2">About</h3>
         <p className="text-xs text-sage-500 dark:text-cream-400">
-          Pantry v0.3 — Sign-in with paste-link fallback for iOS PWAs.
+          Pantry v0.5 — Shared household data.
         </p>
       </Card>
-    </div>
-  )
-}
-
-function SignInLinkFlow({ email, onCancel }) {
-  const [pastedUrl, setPastedUrl] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const [showManual, setShowManual] = useState(false)
-
-  async function pasteFromClipboard() {
-    setError('')
-    try {
-      const text = await navigator.clipboard.readText()
-      if (!text) {
-        setError('Clipboard is empty. Copy the sign-in link from your email first.')
-        return
-      }
-      await complete(text)
-    } catch (err) {
-      // Clipboard API might be blocked or unsupported — fall through to manual
-      setShowManual(true)
-      setError('Could not read clipboard automatically. Paste the link below instead.')
-    }
-  }
-
-  async function complete(url) {
-    setBusy(true); setError('')
-    try {
-      await completeSignInFromUrl(url.trim(), email)
-      // The auth listener in DataContext will pick up the new user and re-render.
-    } catch (err) {
-      console.error(err)
-      setError(err.message || 'Sign-in failed. Double-check the link is correct.')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <div className="space-y-3">
-      <div className="bg-sage-400/10 border border-sage-400/30 rounded-xl p-3 text-sm">
-        <div className="font-medium mb-1">Check your email</div>
-        <p className="text-xs text-sage-600 dark:text-cream-300">
-          We sent a sign-in link to <strong>{email}</strong>.
-        </p>
-        <ol className="text-xs text-sage-600 dark:text-cream-300 mt-2 space-y-1 list-decimal list-inside">
-          <li>Open the email in Mail</li>
-          <li><strong>Long-press</strong> the sign-in link and choose <strong>Copy Link</strong></li>
-          <li>Come back here and tap <strong>Paste Sign-In Link</strong> below</li>
-        </ol>
-      </div>
-
-      <Button onClick={pasteFromClipboard} disabled={busy} className="w-full">
-        <ClipboardPaste className="w-4 h-4" /> {busy ? 'Signing in…' : 'Paste Sign-In Link'}
-      </Button>
-
-      {showManual && (
-        <div className="space-y-2">
-          <label className="text-xs text-sage-500">Or paste the link here manually:</label>
-          <Input
-            value={pastedUrl}
-            onChange={e => setPastedUrl(e.target.value)}
-            placeholder="https://..."
-          />
-          <Button variant="secondary" onClick={() => complete(pastedUrl)} disabled={busy || !pastedUrl.trim()} className="w-full">
-            Sign In
-          </Button>
-        </div>
-      )}
-
-      {!showManual && (
-        <button onClick={() => setShowManual(true)} className="text-xs text-sage-500 underline block w-full text-center">
-          Paste doesn't work? Enter link manually
-        </button>
-      )}
-
-      {error && <div className="text-xs text-terracotta-500">{error}</div>}
-
-      <button onClick={onCancel} className="text-xs text-sage-500 underline block w-full text-center">
-        Use a different email
-      </button>
     </div>
   )
 }
@@ -216,5 +144,16 @@ function ThemeButton({ active, onClick, icon: Icon, label }) {
       <Icon className="w-5 h-5" />
       <span className="text-xs">{label}</span>
     </button>
+  )
+}
+
+function GoogleIcon() {
+  return (
+    <svg className="w-4 h-4" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+      <path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z"/>
+      <path fill="#FF3D00" d="M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 16.318 4 9.656 8.337 6.306 14.691z"/>
+      <path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238C29.211 35.091 26.715 36 24 36c-5.202 0-9.619-3.317-11.283-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44z"/>
+      <path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303c-.792 2.237-2.231 4.166-4.087 5.571.001-.001.002-.001.003-.002l6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z"/>
+    </svg>
   )
 }
