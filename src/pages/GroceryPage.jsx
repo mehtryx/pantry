@@ -149,6 +149,7 @@ export default function GroceryPage() {
         onClose={() => setShowAdd(false)}
         items={items}
         stores={allStores}
+        departments={departments}
         onAdd={addGrocery}
       />
     </div>
@@ -244,11 +245,12 @@ function GroceryGrouped({ entries, groupBy, groupLabel, items, grocery, reservat
   )
 }
 
-function AddGroceryModal({ open, onClose, items, stores, onAdd }) {
+function AddGroceryModal({ open, onClose, items, stores, departments, onAdd }) {
   const [nameInput, setNameInput] = useState('')
   const [selectedItem, setSelectedItem] = useState(null)
   const [unit, setUnit] = useState('count')
   const [qty, setQty] = useState('1')
+  const [department, setDepartment] = useState('')
   const [store, setStore] = useState('')
 
   const suggestions = useMemo(() => {
@@ -263,10 +265,13 @@ function AddGroceryModal({ open, onClose, items, stores, onAdd }) {
     setSelectedItem(item)
     setNameInput(item.name)
     setUnit(item.unit)
+    // Pre-fill department from the linked item so she doesn't retype
+    setDepartment(item.department || '')
   }
 
   function reset() {
-    setNameInput(''); setSelectedItem(null); setUnit('count'); setQty('1'); setStore('')
+    setNameInput(''); setSelectedItem(null); setUnit('count'); setQty('1')
+    setDepartment(''); setStore('')
   }
 
   async function submit() {
@@ -277,6 +282,7 @@ function AddGroceryModal({ open, onClose, items, stores, onAdd }) {
       unit,
       quantity: Number(qty),
       store: store || null,
+      department: department || null,
     })
     reset(); onClose()
   }
@@ -323,6 +329,19 @@ function AddGroceryModal({ open, onClose, items, stores, onAdd }) {
               {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
             </Select>
           </div>
+        </div>
+
+        <div>
+          <label className="text-sm text-muted mb-1 block">
+            Department (optional)
+            {selectedItem?.department && (
+              <span className="text-xs text-subtle ml-2">from item</span>
+            )}
+          </label>
+          <Select value={department} onChange={e => setDepartment(e.target.value)}>
+            <option value="">No department</option>
+            {departments.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}
+          </Select>
         </div>
 
         <div>

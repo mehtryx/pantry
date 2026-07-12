@@ -193,7 +193,15 @@ export function DataProvider({ children }) {
     await deleteDoc(doc(db, 'items', id))
   }
 
-  async function addGrocery({ itemId, name, unit, quantity, store }) {
+  /**
+   * Add a grocery list entry. If a `department` is passed:
+   *   - and `itemId` is set: update that pantry item's department (single source of truth)
+   *   - and `itemId` is not set: the department gets carried forward when the
+   *     item is auto-created at "mark bought" time
+   * Departments on grocery entries themselves are cached only so the auto-create
+   * has the info.
+   */
+  async function addGrocery({ itemId, name, unit, quantity, store, department }) {
     await addDoc(collection(db, 'grocery'), {
       ...scopeFields(),
       itemId: itemId || null,
@@ -201,10 +209,22 @@ export function DataProvider({ children }) {
       unit,
       quantity: Number(quantity) || 0,
       store: store || null,
+      department: department || null, // used for pantry-item auto-create if unlinked
       addedBy: 'manual',
       bought: false,
       createdAt: serverTimestamp(),
     })
+    // If linked to an existing pantry item and a department was chosen,
+    // update that item's department. Cleaner than duplicating state.
+    if (itemId && department) {
+      const item = items.find(i => i.id === itemId)
+      if (item && item.department !== department) {
+        await updateDoc(doc(db, 'items', itemId), {
+          department,
+          updatedAt: serverTimestamp(),
+        })
+      }
+    }
   }
 
   async function updateGrocery(id, patch) {
@@ -232,6 +252,7 @@ export function DataProvider({ children }) {
         let itemId = gCurrent.itemId
         if (!itemId) {
           // Grocery entry wasn't linked to a pantry item — create one now.
+          // Carry over the department if the grocery entry had one chosen.
           const newRef = doc(collection(db, 'items'))
           tx.set(newRef, {
             ...scopeFields(),
@@ -239,6 +260,7 @@ export function DataProvider({ children }) {
             unit: gCurrent.unit,
             stock: { [WAITING]: gCurrent.quantity || 0 },
             stores: gCurrent.store ? [gCurrent.store] : [],
+            department: gCurrent.department || null,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           })
