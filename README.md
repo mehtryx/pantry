@@ -16,15 +16,15 @@ A personal PWA for tracking household food inventory, grocery lists, and meal pl
 - Automatic three-quantity tracking per item (on-hand, incoming, reserved) with color-coded status
 - Recipe library — create, edit, duplicate, delete recipes with per-ingredient quantities and pantry-item autocomplete
 - 9-day meal planner with breakfast/lunch/dinner slots, multiple entries per slot, and quick "leftover" placeholders that don't consume stock
+- Per-meal ingredient sourcing — tap an upcoming meal to assign which locations to draw each ingredient from; unassigned ingredients fall back to default drain order
 - Reservations from planned meals automatically add shortfalls to the grocery list; removing a plan cleans them up
-- Auto-cook: meals planned for past dates automatically drain their ingredients from stock (defaults to your location display order; Phase 2 v1.2 will add per-meal source overrides)
+- Auto-cook: meals planned for past dates automatically drain their ingredients from stock; race-safe against concurrent multi-device use
 - Meal history: past cooked meals kept as snapshots so editing recipes later doesn't rewrite history; individually deletable, and a bulk purge for anything older than 30 days
-- Household-shared data — everyone in the household sees the same pantry
+- Household-shared data with concurrency safety — everyone in the household sees the same pantry, and simultaneous edits from multiple devices don't clobber each other
 - 6 color palettes × light/dark/auto modes × small/medium/large font size — all persist per device
 - Offline-capable PWA installable on iOS/Android home screen
 
 **Roadmap (not yet built):**
-- Per-meal ingredient sourcing (choose which locations to draw from for each ingredient) — Phase 2 v1.2
 - Additional recipe fields UI (servings, notes/instructions, prep/cook times, tags, photos) — Phase 3
 
 ---
@@ -371,6 +371,7 @@ src/
     BottomNav.jsx        — tab bar
     LocationsEditor.jsx  — rename/add/remove/reorder storage locations
     RecipeEditor.jsx     — create/edit recipe with ingredient autocomplete
+    MealPlanDetail.jsx   — expand a planned meal and assign per-ingredient sources
   pages/
     SignInPage.jsx       — pre-auth screen
     PantryPage.jsx       — house inventory (with Put Away chip when items are waiting)

@@ -6,6 +6,7 @@ import { todayISO } from '../contexts/DataContext'
 import { MEAL_SLOTS } from '../lib/constants'
 import { computeItemStatus } from '../lib/status'
 import { Button, Input, Card, Modal, EmptyState } from '../components/UI'
+import MealPlanDetail from '../components/MealPlanDetail'
 
 const SLOT_LABELS = { breakfast: 'Breakfast', lunch: 'Lunch', dinner: 'Dinner' }
 
@@ -14,6 +15,7 @@ export default function MealsPage() {
   const { mealPlans, recipes, items, grocery, reservations, addMealPlan, deleteMealPlan } = useData()
   const [daysShown, setDaysShown] = useState(9)
   const [picker, setPicker] = useState(null) // { date, slot } when adding
+  const [detailPlan, setDetailPlan] = useState(null) // clicked plan for source assignment
   const [showHistory, setShowHistory] = useState(false)
 
   const today = todayISO()
@@ -100,6 +102,7 @@ export default function MealsPage() {
             reservations={reservations}
             onAdd={(slot) => setPicker({ date: day.iso, slot })}
             onDelete={deleteMealPlan}
+            onOpenDetail={setDetailPlan}
           />
         ))}
 
@@ -128,11 +131,17 @@ export default function MealsPage() {
         open={showHistory}
         onClose={() => setShowHistory(false)}
       />
+
+      <MealPlanDetail
+        plan={detailPlan}
+        onClose={() => setDetailPlan(null)}
+        onDelete={deleteMealPlan}
+      />
     </div>
   )
 }
 
-function DayCard({ day, forwardRef, plansByDay, recipes, items, grocery, reservations, onAdd, onDelete }) {
+function DayCard({ day, forwardRef, plansByDay, recipes, items, grocery, reservations, onAdd, onDelete, onOpenDetail }) {
   const dayLabel = day.date.toLocaleDateString(undefined, { weekday: 'long' })
   const dateLabel = day.date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
   return (
@@ -156,6 +165,7 @@ function DayCard({ day, forwardRef, plansByDay, recipes, items, grocery, reserva
               reservations={reservations}
               onAdd={() => onAdd(slot)}
               onDelete={onDelete}
+              onOpenDetail={onOpenDetail}
             />
           ))}
         </div>
@@ -164,7 +174,7 @@ function DayCard({ day, forwardRef, plansByDay, recipes, items, grocery, reserva
   )
 }
 
-function SlotSection({ slot, plans, recipes, items, grocery, reservations, onAdd, onDelete }) {
+function SlotSection({ slot, plans, recipes, items, grocery, reservations, onAdd, onDelete, onOpenDetail }) {
   return (
     <div>
       <div className="text-xs font-medium uppercase tracking-wide text-muted mb-1.5">
@@ -180,6 +190,7 @@ function SlotSection({ slot, plans, recipes, items, grocery, reservations, onAdd
             grocery={grocery}
             reservations={reservations}
             onDelete={() => onDelete(plan.id)}
+            onOpen={() => onOpenDetail(plan)}
           />
         ))}
       </ul>
@@ -193,7 +204,7 @@ function SlotSection({ slot, plans, recipes, items, grocery, reservations, onAdd
   )
 }
 
-function PlanEntry({ plan, recipes, items, grocery, reservations, onDelete }) {
+function PlanEntry({ plan, recipes, items, grocery, reservations, onDelete, onOpen }) {
   if (plan.leftoverText) {
     return (
       <li className="flex items-center gap-2 bg-surface2 rounded-lg px-2.5 py-2">
@@ -213,12 +224,20 @@ function PlanEntry({ plan, recipes, items, grocery, reservations, onDelete }) {
     'red-under': 'bg-status-redUnder',
     neutral: 'bg-subtle/50',
   }
+  const hasAssignments = plan.assignments && Object.keys(plan.assignments).length > 0
   return (
-    <li className="flex items-center gap-2 bg-surface2 rounded-lg px-2.5 py-2">
-      <div className={`w-2 h-2 rounded-full status-dot flex-shrink-0 ${dotClasses[status]}`} />
-      <span className="text-sm text-body flex-1 truncate">
-        {recipe?.name || <em className="text-subtle">(deleted recipe)</em>}
-      </span>
+    <li className="flex items-center gap-2 bg-surface2 rounded-lg px-2.5 py-2 active:bg-surface2/80">
+      <button onClick={onOpen} className="flex items-center gap-2 flex-1 min-w-0 text-left">
+        <div className={`w-2 h-2 rounded-full status-dot flex-shrink-0 ${dotClasses[status]}`} />
+        <span className="text-sm text-body flex-1 truncate">
+          {recipe?.name || <em className="text-subtle">(deleted recipe)</em>}
+        </span>
+        {hasAssignments && (
+          <span className="text-[10px] uppercase tracking-wide bg-primary/20 text-primary rounded px-1.5 py-0.5 flex-shrink-0">
+            sourced
+          </span>
+        )}
+      </button>
       <button onClick={onDelete} className="text-subtle hover:text-danger p-1" aria-label="Remove">
         <X className="w-3.5 h-3.5" />
       </button>

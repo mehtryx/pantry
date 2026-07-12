@@ -1,7 +1,8 @@
 import { createContext, useContext, useEffect, useState, useMemo } from 'react'
 import {
   collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot,
-  query, where, serverTimestamp, writeBatch
+  query, where, serverTimestamp, writeBatch, runTransaction,
+  increment, deleteField, getDoc
 } from 'firebase/firestore'
 import { db, auth, initAuth, ensureHouseholdMembership, householdIdForEmail } from '../lib/firebase'
 import { onAuthStateChanged } from 'firebase/auth'
@@ -162,11 +163,17 @@ export function DataProvider({ children }) {
   async function setItemLocationQty(id, location, quantity) {
     const item = items.find(i => i.id === id)
     if (!item) return
-    const stock = { ...(item.stock || {}) }
-    const q = Math.max(0, Number(quantity) || 0)
-    if (q === 0) delete stock[location]
-    else stock[location] = q
-    await updateItem(id, { stock })
+    const current = item.stock?.[location] || 0
+    const target = Math.max(0, Number(quantity) || 0)
+    const delta = target - current
+    if (delta === 0) return
+    const update = { updatedAt: serverTimestamp() }
+    // Use increment() so a concurrent edit to a DIFFERENT location key doesn't
+    // get clobbered. If target is 0, also remove the field for cleanliness.
+    update[`stock.${location}`] = increment(delta)
+    await updateDoc(doc(db, 'items', id), update)
+    // If we drove it to zero and want to clean the stale field, run a follow-up.
+    // We don't strictly need this; the field is fine at 0. Leaving it alone.
   }
 
   async function deleteItem(id) {
@@ -200,58 +207,79 @@ export function DataProvider({ children }) {
     if (!g) return
     if (bought === g.bought) return
 
-    const batch = writeBatch(db)
+    await runTransaction(db, async (tx) => {
+      const groceryRef = doc(db, 'grocery', id)
+      const gSnap = await tx.get(groceryRef)
+      if (!gSnap.exists()) return
+      const gCurrent = gSnap.data()
+      // Idempotent guard: if someone else already flipped it, don't double-apply.
+      if (gCurrent.bought === bought) return
 
-    if (bought) {
-      let itemId = g.itemId
-      if (!itemId) {
-        const newRef = doc(collection(db, 'items'))
-        batch.set(newRef, {
-          ...scopeFields(),
-          name: g.name,
-          unit: g.unit,
-          stock: { [WAITING]: g.quantity || 0 },
-          stores: g.store ? [g.store] : [],
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        })
-        itemId = newRef.id
-        batch.update(doc(db, 'grocery', id), { bought: true, itemId })
+      if (bought) {
+        let itemId = gCurrent.itemId
+        if (!itemId) {
+          // Grocery entry wasn't linked to a pantry item — create one now.
+          const newRef = doc(collection(db, 'items'))
+          tx.set(newRef, {
+            ...scopeFields(),
+            name: gCurrent.name,
+            unit: gCurrent.unit,
+            stock: { [WAITING]: gCurrent.quantity || 0 },
+            stores: gCurrent.store ? [gCurrent.store] : [],
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          })
+          itemId = newRef.id
+          tx.update(groceryRef, { bought: true, itemId })
+        } else {
+          // Atomic increment — safe against concurrent writes to the same item
+          tx.update(doc(db, 'items', itemId), {
+            [`stock.${WAITING}`]: increment(gCurrent.quantity || 0),
+            updatedAt: serverTimestamp(),
+          })
+          tx.update(groceryRef, { bought: true })
+        }
       } else {
-        const item = items.find(i => i.id === itemId)
-        const current = item?.stock?.[WAITING] || 0
-        const newStock = { ...(item?.stock || {}), [WAITING]: current + (g.quantity || 0) }
-        batch.update(doc(db, 'items', itemId), { stock: newStock, updatedAt: serverTimestamp() })
-        batch.update(doc(db, 'grocery', id), { bought: true })
+        // Un-mark: subtract quantity from WAITING, but never below zero.
+        if (gCurrent.itemId) {
+          const itemSnap = await tx.get(doc(db, 'items', gCurrent.itemId))
+          const currentWaiting = itemSnap.data()?.stock?.[WAITING] || 0
+          const actualSubtract = Math.min(gCurrent.quantity || 0, currentWaiting)
+          tx.update(doc(db, 'items', gCurrent.itemId), {
+            [`stock.${WAITING}`]: increment(-actualSubtract),
+            updatedAt: serverTimestamp(),
+          })
+        }
+        tx.update(groceryRef, { bought: false })
       }
-    } else {
-      if (g.itemId) {
-        const item = items.find(i => i.id === g.itemId)
-        const current = item?.stock?.[WAITING] || 0
-        const remaining = Math.max(0, current - (g.quantity || 0))
-        const newStock = { ...(item?.stock || {}) }
-        if (remaining === 0) delete newStock[WAITING]
-        else newStock[WAITING] = remaining
-        batch.update(doc(db, 'items', g.itemId), { stock: newStock, updatedAt: serverTimestamp() })
-      }
-      batch.update(doc(db, 'grocery', id), { bought: false })
-    }
-
-    await batch.commit()
+    })
   }
 
   async function putAway(itemId, targetLocation, quantity) {
     const item = items.find(i => i.id === itemId)
     if (!item) return
-    const stock = { ...(item.stock || {}) }
-    const waiting = stock[WAITING] || 0
+    const waiting = item.stock?.[WAITING] || 0
     const moveQty = Math.min(Number(quantity) || 0, waiting)
     if (moveQty <= 0) return
 
-    stock[WAITING] = waiting - moveQty
-    if (stock[WAITING] === 0) delete stock[WAITING]
-    stock[targetLocation] = (stock[targetLocation] || 0) + moveQty
-    await updateItem(itemId, { stock })
+    // Atomic: subtract from WAITING and add to target in one write.
+    // A concurrent putAway of the SAME item into a DIFFERENT target won't lose.
+    // A concurrent putAway of the SAME item into the SAME target adds both.
+    // The only remaining race is if two putAways collectively subtract more
+    // than WAITING has, which would drive WAITING negative. Guard with a
+    // transaction to check-then-decrement.
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(doc(db, 'items', itemId))
+      if (!snap.exists()) return
+      const currentWaiting = snap.data().stock?.[WAITING] || 0
+      const actualMove = Math.min(moveQty, currentWaiting)
+      if (actualMove <= 0) return
+      tx.update(doc(db, 'items', itemId), {
+        [`stock.${WAITING}`]: increment(-actualMove),
+        [`stock.${targetLocation}`]: increment(actualMove),
+        updatedAt: serverTimestamp(),
+      })
+    })
   }
 
   async function addRecipe({ name, ingredients }) {
@@ -346,55 +374,97 @@ export function DataProvider({ children }) {
     await reconcileGroceryList(scopeFields(), remaining, items, recipes, grocery)
   }
 
+  /**
+   * Set per-ingredient location assignments for an uncooked meal plan.
+   * `assignments` shape: { [itemId]: { [locationId]: quantity } }
+   * Pass null/empty object to clear.
+   */
+  async function updateMealPlanAssignments(planId, assignments) {
+    await updateDoc(doc(db, 'mealPlans', planId), {
+      assignments: assignments && Object.keys(assignments).length > 0 ? assignments : deleteField(),
+    })
+  }
+
   // ---------- Location Management ----------
+  // All of these read the current locations array from the household doc
+  // inside a transaction, so concurrent renames/adds/reorders don't clobber
+  // one another.
 
   async function renameLocation(id, newLabel) {
     const trimmed = newLabel.trim()
     if (!trimmed) return
-    const next = storageLocations.map(l => l.id === id ? { ...l, label: trimmed } : l)
-    await updateDoc(doc(db, 'households', householdId), { locations: next })
+    const ref = doc(db, 'households', householdId)
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref)
+      if (!snap.exists()) return
+      const cur = snap.data().locations || []
+      const next = cur.map(l => l.id === id ? { ...l, label: trimmed } : l)
+      tx.update(ref, { locations: next })
+    })
   }
 
   async function addLocation(label, id) {
     const trimmed = label.trim()
     if (!trimmed) return
-    // Ensure unique ID
-    let candidate = id
-    const existing = new Set(storageLocations.map(l => l.id))
-    if (existing.has(candidate)) {
-      let n = 2
-      while (existing.has(`${candidate}_${n}`)) n++
-      candidate = `${candidate}_${n}`
-    }
-    const next = [...storageLocations, { id: candidate, label: trimmed }]
-    await updateDoc(doc(db, 'households', householdId), { locations: next })
+    const ref = doc(db, 'households', householdId)
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref)
+      if (!snap.exists()) return
+      const cur = snap.data().locations || []
+      const existing = new Set(cur.map(l => l.id))
+      let candidate = id
+      if (existing.has(candidate)) {
+        let n = 2
+        while (existing.has(`${candidate}_${n}`)) n++
+        candidate = `${candidate}_${n}`
+      }
+      const next = [...cur, { id: candidate, label: trimmed }]
+      tx.update(ref, { locations: next })
+    })
   }
 
   async function reorderLocations(orderedIds) {
-    const byId = Object.fromEntries(storageLocations.map(l => [l.id, l]))
-    const next = orderedIds.map(id => byId[id]).filter(Boolean)
-    await updateDoc(doc(db, 'households', householdId), { locations: next })
+    const ref = doc(db, 'households', householdId)
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref)
+      if (!snap.exists()) return
+      const cur = snap.data().locations || []
+      const byId = Object.fromEntries(cur.map(l => [l.id, l]))
+      const next = orderedIds.map(id => byId[id]).filter(Boolean)
+      tx.update(ref, { locations: next })
+    })
   }
 
   /**
    * Delete a location. Any stock currently at that location gets moved to
-   * "Waiting to be Stored" so it's not orphaned.
+   * "Waiting to be Stored" so it's not orphaned. Uses a transaction on the
+   * household doc; per-item stock updates use atomic increments so concurrent
+   * putAway/increment writes are safe.
    */
   async function deleteLocation(id) {
-    const next = storageLocations.filter(l => l.id !== id)
-    const batch = writeBatch(db)
-    batch.update(doc(db, 'households', householdId), { locations: next })
+    const ref = doc(db, 'households', householdId)
 
-    // Sweep every item: if it has stock at the deleted location, move to WAITING
-    for (const item of items) {
-      const qty = item.stock?.[id] || 0
-      if (qty <= 0) continue
-      const newStock = { ...item.stock }
-      delete newStock[id]
-      newStock[WAITING] = (newStock[WAITING] || 0) + qty
-      batch.update(doc(db, 'items', item.id), { stock: newStock, updatedAt: serverTimestamp() })
+    // Update household locations transactionally
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref)
+      if (!snap.exists()) return
+      const cur = snap.data().locations || []
+      const next = cur.filter(l => l.id !== id)
+      tx.update(ref, { locations: next })
+    })
+
+    // Move stock from the deleted location to WAITING for each affected item.
+    // These are separate updates using atomic increments — safe against other
+    // concurrent stock changes.
+    const affected = items.filter(item => (item.stock?.[id] || 0) > 0)
+    for (const item of affected) {
+      const qty = item.stock[id]
+      await updateDoc(doc(db, 'items', item.id), {
+        [`stock.${id}`]: deleteField(),
+        [`stock.${WAITING}`]: increment(qty),
+        updatedAt: serverTimestamp(),
+      })
     }
-    await batch.commit()
   }
 
   const value = {
@@ -407,7 +477,7 @@ export function DataProvider({ children }) {
     addItem, updateItem, setItemLocationQty, deleteItem,
     addGrocery, updateGrocery, deleteGrocery, setGroceryBought, putAway,
     addRecipe, updateRecipe, deleteRecipe, duplicateRecipe,
-    addMealPlan, deleteMealPlan,
+    addMealPlan, deleteMealPlan, updateMealPlanAssignments,
     renameLocation, addLocation, reorderLocations, deleteLocation,
   }
 
@@ -420,9 +490,16 @@ export function todayISO() {
 }
 
 /**
- * Auto-cook meals whose date has passed, draining stock from locations in
- * DRAIN_ORDER. Runs opportunistically whenever the app loads with pending
- * past meals.
+ * Auto-cook meals whose date has passed. Each meal is cooked in its own
+ * transaction to prevent double-cook races (two devices seeing the same
+ * uncooked meal, both draining stock). The transaction re-checks the
+ * `cooked` flag and aborts if another writer already marked it.
+ *
+ * Draw order:
+ *   1. If the plan has per-ingredient `assignments`, drain those specified
+ *      amounts from those specified locations first.
+ *   2. Any remaining shortfall drains from the household's location order
+ *      (matches the display order from Settings → Locations).
  */
 async function autoCookPastMeals(householdId, uid, mealPlans, items, recipes, storageLocations) {
   const today = todayISO()
@@ -431,54 +508,94 @@ async function autoCookPastMeals(householdId, uid, mealPlans, items, recipes, st
 
   const drainOrder = (storageLocations || []).map(l => l.id)
 
-  const batch = writeBatch(db)
-  const stockDeltas = {}
-
+  // Cook each meal in its own transaction. If someone else already cooked
+  // it, our transaction just no-ops. If we win the race, we take the write.
   for (const plan of toCook) {
-    const recipe = plan.recipeId ? recipes.find(r => r.id === plan.recipeId) : null
-    if (!recipe) {
-      // Leftover or orphaned recipe reference — just mark cooked
-      batch.update(doc(db, 'mealPlans', plan.id), { cooked: true })
-      continue
-    }
-    for (const ing of (recipe.ingredients || [])) {
-      if (!ing.itemId) continue
-      const item = items.find(i => i.id === ing.itemId)
-      if (!item) continue
-      let need = ing.quantity || 0
-      const workingStock = { ...(item.stock || {}), ...(stockDeltas[ing.itemId] || {}) }
-      for (const loc of drainOrder) {
-        if (need <= 0) break
-        const have = workingStock[loc] || 0
-        if (have <= 0) continue
-        const take = Math.min(have, need)
-        workingStock[loc] = have - take
-        need -= take
-      }
-      for (const loc of Object.keys(workingStock)) {
-        if (workingStock[loc] === 0) delete workingStock[loc]
-      }
-      stockDeltas[ing.itemId] = workingStock
-    }
-    // Snapshot the ingredients as-cooked, so editing the recipe later doesn't
-    // rewrite history.
-    batch.update(doc(db, 'mealPlans', plan.id), {
-      cooked: true,
-      snapshot: {
-        recipeName: recipe.name,
-        ingredients: recipe.ingredients || [],
-      },
-    })
-  }
+    try {
+      await runTransaction(db, async (tx) => {
+        const planRef = doc(db, 'mealPlans', plan.id)
+        const planSnap = await tx.get(planRef)
+        if (!planSnap.exists()) return
+        const planData = planSnap.data()
+        if (planData.cooked) return // someone beat us to it — abort cleanly
 
-  for (const [itemId, stock] of Object.entries(stockDeltas)) {
-    batch.update(doc(db, 'items', itemId), { stock })
-  }
+        const recipe = planData.recipeId ? recipes.find(r => r.id === planData.recipeId) : null
+        if (!recipe) {
+          // Leftover or orphaned recipe reference — just mark cooked
+          tx.update(planRef, { cooked: true })
+          return
+        }
 
-  try {
-    await batch.commit()
-  } catch (e) {
-    console.error('Auto-cook failed:', e)
+        // Read every ingredient item fresh inside the transaction so we
+        // deduct from actual current stock, not stale client state.
+        const itemDeductions = {} // itemId -> { location: amountToDeduct }
+        const assignments = planData.assignments || {}
+
+        for (const ing of (recipe.ingredients || [])) {
+          if (!ing.itemId) continue
+          const itemRef = doc(db, 'items', ing.itemId)
+          const itemSnap = await tx.get(itemRef)
+          if (!itemSnap.exists()) continue
+          const currentStock = itemSnap.data().stock || {}
+
+          let need = ing.quantity || 0
+          const deducts = itemDeductions[ing.itemId] || {}
+          const workingStock = { ...currentStock }
+          // Fold in any deductions we've already queued for this same item
+          for (const [loc, amount] of Object.entries(deducts)) {
+            workingStock[loc] = (workingStock[loc] || 0) - amount
+          }
+
+          // 1) Apply user assignments first
+          const asn = assignments[ing.itemId] || {}
+          for (const [loc, requested] of Object.entries(asn)) {
+            if (need <= 0) break
+            const available = workingStock[loc] || 0
+            const take = Math.min(available, requested, need)
+            if (take > 0) {
+              deducts[loc] = (deducts[loc] || 0) + take
+              workingStock[loc] -= take
+              need -= take
+            }
+          }
+
+          // 2) Fall back to default drain order for remaining shortfall
+          for (const loc of drainOrder) {
+            if (need <= 0) break
+            const have = workingStock[loc] || 0
+            if (have <= 0) continue
+            const take = Math.min(have, need)
+            deducts[loc] = (deducts[loc] || 0) + take
+            workingStock[loc] -= take
+            need -= take
+          }
+
+          itemDeductions[ing.itemId] = deducts
+        }
+
+        // Apply the deductions using atomic decrements
+        for (const [itemId, deducts] of Object.entries(itemDeductions)) {
+          const update = { updatedAt: serverTimestamp() }
+          for (const [loc, amount] of Object.entries(deducts)) {
+            if (amount > 0) update[`stock.${loc}`] = increment(-amount)
+          }
+          if (Object.keys(update).length > 1) {
+            tx.update(doc(db, 'items', itemId), update)
+          }
+        }
+
+        // Mark cooked with snapshot
+        tx.update(planRef, {
+          cooked: true,
+          snapshot: {
+            recipeName: recipe.name,
+            ingredients: recipe.ingredients || [],
+          },
+        })
+      })
+    } catch (e) {
+      console.error(`Auto-cook failed for plan ${plan.id}:`, e)
+    }
   }
 }
 
