@@ -1,11 +1,34 @@
-import { Sun, Moon, Monitor, Download, Upload } from 'lucide-react'
+import { useState } from 'react'
+import { Sun, Moon, Monitor, Download, Mail, LogOut, CheckCircle2 } from 'lucide-react'
 import { useTheme } from '../contexts/ThemeContext'
 import { useData } from '../contexts/DataContext'
-import { Button, Card } from '../components/UI'
+import { sendMagicLink, signOutUser } from '../lib/firebase'
+import { Button, Card, Input } from '../components/UI'
 
 export default function SettingsPage() {
   const { theme, setTheme } = useTheme()
-  const { items, grocery, recipes, mealPlans } = useData()
+  const { items, grocery, recipes, mealPlans, user } = useData()
+  const [email, setEmail] = useState('')
+  const [linkSent, setLinkSent] = useState(false)
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState('')
+
+  const isAnonymous = user?.isAnonymous
+  const userEmail = user?.email
+
+  async function handleSendLink() {
+    if (!email.trim()) return
+    setSending(true); setError('')
+    try {
+      await sendMagicLink(email.trim())
+      setLinkSent(true)
+    } catch (err) {
+      console.error(err)
+      setError(err.message || 'Failed to send sign-in link')
+    } finally {
+      setSending(false)
+    }
+  }
 
   function exportData() {
     const data = { items, grocery, recipes, mealPlans, exportedAt: new Date().toISOString() }
@@ -24,6 +47,57 @@ export default function SettingsPage() {
         <h1 className="text-2xl font-semibold text-sage-800 dark:text-cream-100">Settings</h1>
       </header>
 
+      {/* Account */}
+      <Card className="p-4 mb-4">
+        <h3 className="text-sm font-medium text-sage-600 dark:text-cream-300 mb-3">Account</h3>
+
+        {!isAnonymous && userEmail ? (
+          <>
+            <div className="flex items-center gap-2 text-sm text-sage-700 dark:text-cream-200 mb-3">
+              <CheckCircle2 className="w-4 h-4 text-sage-400" />
+              Signed in as <strong>{userEmail}</strong>
+            </div>
+            <p className="text-xs text-sage-500 dark:text-cream-400 mb-3">
+              Your data is safe. Sign in with this email on any device to access it.
+            </p>
+            <Button variant="secondary" onClick={signOutUser} className="w-full">
+              <LogOut className="w-4 h-4" /> Sign Out
+            </Button>
+          </>
+        ) : linkSent ? (
+          <div className="bg-sage-400/10 border border-sage-400/30 rounded-xl p-3 text-sm">
+            <strong>Check your email.</strong> Tap the sign-in link we sent to <strong>{email}</strong>. Open it on this same device to keep your existing pantry data.
+            <button
+              onClick={() => { setLinkSent(false); setEmail('') }}
+              className="block mt-2 text-xs text-sage-500 underline"
+            >
+              Use a different email
+            </button>
+          </div>
+        ) : (
+          <>
+            <p className="text-xs text-sage-500 dark:text-cream-400 mb-3">
+              Right now your data is tied to this device only. Add your email to keep it safe — you'll be able to access it from any device and it won't be lost if Safari clears its storage. No password needed; we send you a sign-in link.
+            </p>
+            <div className="space-y-2">
+              <Input
+                type="email"
+                inputMode="email"
+                autoComplete="email"
+                placeholder="you@example.com"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+              />
+              {error && <div className="text-xs text-terracotta-500">{error}</div>}
+              <Button onClick={handleSendLink} disabled={sending || !email.trim()} className="w-full">
+                <Mail className="w-4 h-4" /> {sending ? 'Sending…' : 'Send Sign-In Link'}
+              </Button>
+            </div>
+          </>
+        )}
+      </Card>
+
+      {/* Theme */}
       <Card className="p-4 mb-4">
         <h3 className="text-sm font-medium text-sage-600 dark:text-cream-300 mb-3">Theme</h3>
         <div className="grid grid-cols-3 gap-2">
@@ -33,6 +107,7 @@ export default function SettingsPage() {
         </div>
       </Card>
 
+      {/* Data */}
       <Card className="p-4 mb-4">
         <h3 className="text-sm font-medium text-sage-600 dark:text-cream-300 mb-2">Data</h3>
         <div className="text-xs text-sage-500 mb-3">
@@ -43,10 +118,11 @@ export default function SettingsPage() {
         </Button>
       </Card>
 
+      {/* About */}
       <Card className="p-4">
         <h3 className="text-sm font-medium text-sage-600 dark:text-cream-300 mb-2">About</h3>
         <p className="text-xs text-sage-500 dark:text-cream-400">
-          Pantry v0.1 — Phase 1 (Inventory + Grocery). Meal planner coming in Phase 2.
+          Pantry v0.2 — Phase 1 with email sign-in. Meal planner coming next.
         </p>
       </Card>
     </div>

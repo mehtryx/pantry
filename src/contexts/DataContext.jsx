@@ -3,7 +3,8 @@ import {
   collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot,
   query, where, serverTimestamp, writeBatch, getDocs
 } from 'firebase/firestore'
-import { db, auth, ensureSignedIn } from '../lib/firebase'
+import { db, auth, initAuth } from '../lib/firebase'
+import { onAuthStateChanged } from 'firebase/auth'
 import { WAITING, DRAIN_ORDER } from '../lib/constants'
 
 const DataContext = createContext(null)
@@ -17,11 +18,13 @@ export function DataProvider({ children }) {
   const [recipes, setRecipes] = useState([])
   const [mealPlans, setMealPlans] = useState([])
 
-  // Sign in on mount
+  // Sign in on mount, then keep user in sync with auth state
   useEffect(() => {
-    ensureSignedIn()
-      .then(u => setUser(u))
-      .catch(err => console.error('Auth failed:', err))
+    initAuth().catch(err => console.error('Auth failed:', err))
+    const unsub = onAuthStateChanged(auth, (u) => {
+      if (u) setUser(u)
+    })
+    return unsub
   }, [])
 
   // Subscribe to collections once signed in
