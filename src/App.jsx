@@ -8,9 +8,12 @@ import PutAwayPage from './pages/PutAwayPage'
 import MealsPage from './pages/MealsPage'
 import RecipesPage from './pages/RecipesPage'
 import SettingsPage from './pages/SettingsPage'
+import SignInPage from './pages/SignInPage'
 
 function Shell() {
-  const { ready, user } = useData()
+  const { user, ready, householdId } = useData()
+
+  // While auth is initializing
   if (!user) {
     return (
       <div className="min-h-screen flex items-center justify-center text-sage-500">
@@ -18,6 +21,21 @@ function Shell() {
       </div>
     )
   }
+
+  // Signed in as anonymous — show the sign-in gate
+  if (user.isAnonymous) {
+    return <SignInPage />
+  }
+
+  // Signed in with Google but household not resolved yet
+  if (!householdId) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-sage-500">
+        Setting up…
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-cream-100 dark:bg-sage-900 pb-20">
       <div className="max-w-2xl mx-auto safe-top">

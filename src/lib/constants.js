@@ -30,3 +30,13 @@ export const DRAIN_ORDER = [
 ]
 
 export const MEAL_SLOTS = ['breakfast', 'lunch', 'dinner']
+
+// Units that need a space between the number and the unit (word-like units).
+// Everything else is a short symbolic/metric unit and stays attached.
+const SPACED_UNITS = new Set(['cup', 'count', 'package'])
+
+export function formatQty(quantity, unit) {
+  const q = quantity ?? ''
+  if (!unit) return String(q)
+  return SPACED_UNITS.has(unit) ? `${q} ${unit}` : `${q}${unit}`
+}

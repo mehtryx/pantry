@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import { Search, Plus, Package2, Trash2, Minus } from 'lucide-react'
 import { useData } from '../contexts/DataContext'
-import { LOCATIONS, STORAGE_LOCATIONS, UNITS, WAITING, locationLabel } from '../lib/constants'
+import { LOCATIONS, STORAGE_LOCATIONS, UNITS, WAITING, locationLabel, formatQty } from '../lib/constants'
 import { computeItemStatus, STATUS_COLORS, STATUS_LABELS } from '../lib/status'
 import { Button, Input, Select, Card, Modal, EmptyState } from '../components/UI'
 
@@ -96,7 +96,7 @@ export default function PantryPage() {
                     </div>
                   </div>
                   <div className="text-right text-xs text-sage-500 dark:text-cream-400">
-                    {st.reserved > 0 && <div>Reserved: {st.reserved}{item.unit}</div>}
+                    {st.reserved > 0 && <div>Reserved: {formatQty(st.reserved, item.unit)}</div>}
                     {st.status === 'red-over' && <div className="text-terracotta-500">On list, have plenty</div>}
                   </div>
                 </Card>
@@ -122,7 +122,7 @@ function stockSummary(item) {
   const entries = Object.entries(item.stock || {}).filter(([, q]) => q > 0)
   if (entries.length === 0) return `Out of stock · ${item.unit}`
   return entries
-    .map(([loc, q]) => `${q}${item.unit} in ${locationLabel(loc)}`)
+    .map(([loc, q]) => `${formatQty(q, item.unit)} in ${locationLabel(loc)}`)
     .join(' · ')
 }
 
@@ -216,7 +216,7 @@ function ItemDetailModal({ item, onClose, setItemLocationQty, updateItem, delete
 
         {waitingQty > 0 && (
           <div className="bg-amber_warn-400/10 border border-amber_warn-400/30 rounded-xl p-3 text-sm">
-            <strong>{waitingQty}{item.unit}</strong> waiting to be stored. Head to the Put Away tab to assign a location.
+            <strong>{formatQty(waitingQty, item.unit)}</strong> waiting to be stored. Head to the Put Away tab to assign a location.
           </div>
         )}
 

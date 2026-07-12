@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import { Plus, ShoppingCart, Check, X, Store, Filter } from 'lucide-react'
 import { useData } from '../contexts/DataContext'
-import { UNITS } from '../lib/constants'
+import { UNITS, formatQty } from '../lib/constants'
 import { computeItemStatus } from '../lib/status'
 import { Button, Input, Select, Card, Modal, EmptyState } from '../components/UI'
 
@@ -134,7 +134,7 @@ function GroceryRow({ g, checkoutMode, statusColor, onToggle, onDelete }) {
             {g.name}
           </div>
           <div className="text-xs text-sage-500 dark:text-cream-400 flex items-center gap-2 flex-wrap">
-            <span>{g.quantity}{g.unit}</span>
+            <span>{formatQty(g.quantity, g.unit)}</span>
             {g.store && <span className="flex items-center gap-0.5"><Store className="w-3 h-3" /> {g.store}</span>}
             {g.addedBy === 'meal:auto' && <span className="text-sage-400">from meal plan</span>}
           </div>

@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState, useMemo } from 'react'
 import {
   collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot,
-  query, where, serverTimestamp, writeBatch, getDocs
+  query, where, serverTimestamp, writeBatch
 } from 'firebase/firestore'
 import { db, auth, initAuth, ensureHouseholdMembership, householdIdForEmail } from '../lib/firebase'
 import { onAuthStateChanged } from 'firebase/auth'
@@ -14,7 +14,6 @@ export function DataProvider({ children }) {
   const [user, setUser] = useState(null)
   const [authError, setAuthError] = useState(null)
   const [householdId, setHouseholdId] = useState(null)
-  const [migrationStatus, setMigrationStatus] = useState('idle') // idle|running|done|error
   const [ready, setReady] = useState(false)
   const [items, setItems] = useState([])
   const [grocery, setGrocery] = useState([])
@@ -32,11 +31,10 @@ export function DataProvider({ children }) {
     return unsub
   }, [])
 
-  // Whenever user changes: derive household ID, ensure membership, migrate legacy docs
+  // Whenever user changes: derive household ID and ensure membership
   useEffect(() => {
     if (!user) return
     if (user.isAnonymous) {
-      // Anonymous placeholder — no household yet
       setHouseholdId(null)
       return
     }
@@ -45,31 +43,27 @@ export function DataProvider({ children }) {
     let cancelled = false
     ;(async () => {
       try {
-        setMigrationStatus('running')
         await ensureHouseholdMembership(user)
-        await migrateLegacyDocs(user.uid, hid)
         if (cancelled) return
-        setMigrationStatus('done')
-        // Only now switch queries to household-scoped
         setHouseholdId(hid)
       } catch (err) {
-        console.error('Household setup / migration failed:', err)
-        if (!cancelled) setMigrationStatus('error')
+        console.error('Household setup failed:', err)
       }
     })()
 
     return () => { cancelled = true }
   }, [user])
 
-  // Subscribe to collections scoped by household (or by uid while anonymous)
+  // Subscribe to collections scoped by household. If not yet in a household
+  // (anonymous), don't subscribe at all — the sign-in gate blocks the app.
   useEffect(() => {
-    if (!user) return
+    if (!user || !householdId) {
+      setItems([]); setGrocery([]); setRecipes([]); setMealPlans([])
+      setReady(!!user)  // ready enough to render the gate
+      return
+    }
 
-    // Anonymous session: still use uid-based queries so the app functions
-    // before she signs in.
-    const scoped = householdId
-      ? [where('householdId', '==', householdId)]
-      : [where('uid', '==', user.uid)]
+    const scoped = [where('householdId', '==', householdId)]
 
     const unsubs = [
       onSnapshot(query(collection(db, 'items'), ...scoped),
@@ -111,10 +105,8 @@ export function DataProvider({ children }) {
     return map
   }, [mealPlans, recipes])
 
-  // Every write gets tagged with the current scope (householdId or uid)
-  const scopeFields = () => householdId
-    ? { householdId }
-    : { uid: user?.uid }
+  // Every write gets tagged with the household ID
+  const scopeFields = () => ({ householdId })
 
   async function addItem({ name, unit, location, quantity }) {
     const stock = { [location]: Number(quantity) || 0 }
@@ -254,7 +246,7 @@ export function DataProvider({ children }) {
 
   const value = {
     user, ready, authError, clearAuthError: () => setAuthError(null),
-    householdId, migrationStatus,
+    householdId,
     items, grocery, recipes, mealPlans, reservations,
     addItem, updateItem, setItemLocationQty, deleteItem,
     addGrocery, updateGrocery, deleteGrocery, setGroceryBought, putAway,
@@ -271,35 +263,10 @@ export function todayISO() {
 }
 
 /**
- * One-time migration: find any docs still keyed by this user's uid (legacy
- * pre-household schema) and stamp them with the householdId. Safe to run
- * multiple times — if there are no legacy docs, it's a no-op.
+ * Auto-cook meals whose date has passed, draining stock from locations in
+ * DRAIN_ORDER. Runs opportunistically whenever the app loads with pending
+ * past meals.
  */
-async function migrateLegacyDocs(uid, hid) {
-  const collections = ['items', 'grocery', 'recipes', 'mealPlans']
-  for (const col of collections) {
-    const q = query(collection(db, col), where('uid', '==', uid))
-    const snap = await getDocs(q)
-    if (snap.empty) continue
-    console.log(`Migrating ${snap.size} legacy ${col} docs to household ${hid}`)
-    // Batch in chunks of 400 to stay under Firestore's 500-write limit
-    const chunks = []
-    let cur = []
-    for (const d of snap.docs) {
-      cur.push(d)
-      if (cur.length >= 400) { chunks.push(cur); cur = [] }
-    }
-    if (cur.length) chunks.push(cur)
-    for (const chunk of chunks) {
-      const batch = writeBatch(db)
-      for (const d of chunk) {
-        batch.update(d.ref, { householdId: hid })
-      }
-      await batch.commit()
-    }
-  }
-}
-
 async function autoCookPastMeals(householdId, uid, mealPlans, items, recipes) {
   const today = todayISO()
   const toCook = mealPlans.filter(p => !p.cooked && p.date < today)

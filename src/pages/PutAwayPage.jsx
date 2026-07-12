@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import { Package, ArrowRight } from 'lucide-react'
 import { useData } from '../contexts/DataContext'
-import { STORAGE_LOCATIONS, WAITING } from '../lib/constants'
+import { STORAGE_LOCATIONS, WAITING, formatQty } from '../lib/constants'
 import { Button, Select, Card, Modal, EmptyState } from '../components/UI'
 
 export default function PutAwayPage() {
@@ -38,7 +38,7 @@ export default function PutAwayPage() {
                 <div className="flex-1">
                   <div className="font-medium text-sage-800 dark:text-cream-100">{item.name}</div>
                   <div className="text-xs text-sage-500 dark:text-cream-400">
-                    {item.stock[WAITING]}{item.unit} to store
+                    {formatQty(item.stock[WAITING], item.unit)} to store
                   </div>
                 </div>
                 <ArrowRight className="w-4 h-4 text-sage-400" />
@@ -74,7 +74,7 @@ function PutAwayModal({ target, onClose, putAway }) {
     <Modal open={!!target} onClose={onClose} title={`Put Away: ${item.name}`}>
       <div className="space-y-3">
         <div className="bg-cream-200 dark:bg-sage-800 rounded-xl p-3 text-sm">
-          <strong>{available}{item.unit}</strong> waiting to be stored
+          <strong>{formatQty(available, item.unit)}</strong> waiting to be stored
         </div>
 
         <div>
@@ -93,7 +93,7 @@ function PutAwayModal({ target, onClose, putAway }) {
             inputMode="decimal"
             value={qty}
             onChange={e => setQty(e.target.value)}
-            placeholder={`All (${available}${item.unit})`}
+            placeholder={`All (${formatQty(available, item.unit)})`}
             className="w-full px-3 py-2.5 min-h-[44px] rounded-xl border border-cream-300 bg-cream-50 dark:bg-sage-800 dark:border-sage-700 dark:text-cream-100"
           />
         </div>
@@ -101,7 +101,7 @@ function PutAwayModal({ target, onClose, putAway }) {
         <div className="flex gap-2 pt-2">
           <Button variant="secondary" onClick={onClose} className="flex-1">Cancel</Button>
           <Button onClick={() => submit(qty === '')} className="flex-1">
-            Store {amountToMove}{item.unit}
+            Store {formatQty(amountToMove, item.unit)}
           </Button>
         </div>
       </div>
